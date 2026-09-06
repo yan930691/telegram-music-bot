@@ -1,10 +1,12 @@
 import asyncio
 import logging
+import os
 import sys
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiohttp import web
 
 from config import BOT_TOKEN, ADMIN_IDS, MONGODB_URI
 from database import db
@@ -20,6 +22,24 @@ logging.basicConfig(level=logging.INFO, stream=sys.stdout,
 
 # Disable aiogram internal noisy logs a bit
 logging.getLogger("aiogram").setLevel(logging.INFO)
+
+
+async def health_handler(request: web.Request):
+    return web.Response(text="OK")
+
+
+async def _start_health_server():
+    """Minimal web server so Render's port scan passes (bots have no web listener)."""
+    port = int(os.getenv("PORT", 8000))
+    app = web.Application()
+    app.router.add_get("/", health_handler)
+    app.router.add_get("/health", health_handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    logging.info("Health server started on port %s", port)
+    return runner
 
 
 def validate_config():
@@ -41,6 +61,12 @@ async def main():
     validate_config()
     logging.info("Config OK: BOT_TOKEN=%s MONGODB_URI=%s ADMIN_IDS=%s",
                  "***" if BOT_TOKEN else None, MONGODB_URI, ADMIN_IDS)
+
+    runner = None
+    try:
+        runner = await _start_health_server()
+    except Exception:
+        logging.exception("Health server failed to start (continuing anyway)")
 
     bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     storage = MemoryStorage()
@@ -73,6 +99,8 @@ async def main():
         raise
     finally:
         await db.close()
+        if runner:
+            await runner.cleanup()
         logging.info("MongoDB connection closed")
 
 
