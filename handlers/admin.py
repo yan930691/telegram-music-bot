@@ -13,6 +13,8 @@ from keyboards.inline import (
     admin_main_kb,
     admin_delete_menu_kb,
     album_add_cat_kb,
+    album_added_kb,
+    song_added_kb,
     categories_kb,
     albums_kb,
     back_to_cats_kb,
@@ -129,9 +131,18 @@ async def addsong_album(callback: CallbackQuery, state: FSMContext):
         await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
         return
     album_id = ObjectId(callback.data.split(":")[1])
+    album = await db.get_album(album_id)
+    album_name = album["name"] if album else ""
     await state.update_data(song_album_id=album_id)
     await state.set_state(AdminStates.waiting_song_title)
-    await callback.message.answer("🎵 <b>သီချင်းအမည် ရိုက်ထည့်ပါ:</b>", parse_mode="HTML")
+    await callback.message.answer(
+        f"🎵 <b>သီချင်း ထည့်မည်</b>\n\n📀 <b>{html.escape(album_name)}</b>\n\n"
+        "1️⃣ သီချင်းအမည် ရိုက်ထည့်ပါ\n"
+        "2️⃣ သို့မဟုတ် အသံဖိုင် (mp3) တိုက်ရိုက် ပို့ပါ — နာမည် မထည့်ရင် "
+        "ဖိုင်ရဲ့ metadata ကနေ အလိုအလျောက် ယူပါမယ်\n\n"
+        "💡 ချန်နယ်ကနေ forward လုပ်ထားတဲ့ ဖိုင်လည်း အဆင်ပြေပါသည်။",
+        parse_mode="HTML",
+    )
     await callback.answer()
 
 
@@ -260,14 +271,23 @@ async def album_cover_wrong_type(message: Message):
 
 async def _finish_add_album(message: Message, state: FSMContext, cover=""):
     data = await state.get_data()
-    await db.add_album(
+    result = await db.add_album(
         data.get("album_name", ""),
         data.get("album_artist", ""),
         data.get("album_cat_id"),
         cover,
     )
+    album_id = result.inserted_id
     await state.clear()
-    await message.answer("✅ <b>အယ်လ်ဘမ် ထည့်ပြီးပါပြီ!</b>", parse_mode="HTML", reply_markup=admin_main_kb())
+
+    name = data.get("album_name", "")
+    artist = data.get("album_artist", "")
+    text = f"✅ <b>အယ်လ်ဘမ် ထည့်ပြီးပါပြီ!</b>\n\n"
+    text += f"📀 <b>{html.escape(name)}</b>\n"
+    if artist:
+        text += f"🎤 {html.escape(artist)}\n"
+    text += "\nအခု သီချင်းများ ထည့်နိုင်ပါပြီ 👇"
+    await message.answer(text, parse_mode="HTML", reply_markup=album_added_kb(album_id))
 
 
 # ---------------- Song upload ----------------
@@ -278,29 +298,43 @@ async def start_song_upload(callback: CallbackQuery, state: FSMContext):
         await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
         return
     album_id = ObjectId(callback.data.split(":")[1])
+    album = await db.get_album(album_id)
+    album_name = album["name"] if album else ""
     await state.update_data(song_album_id=album_id)
     await state.set_state(AdminStates.waiting_song_title)
-    await callback.message.answer("🎵 <b>သီချင်းအမည် ရိုက်ထည့်ပါ:</b>", parse_mode="HTML")
+    await callback.message.answer(
+        f"🎵 <b>သီချင်း ထည့်မည်</b>\n\n📀 <b>{html.escape(album_name)}</b>\n\n"
+        "1️⃣ သီချင်းအမည် ရိုက်ထည့်ပါ\n"
+        "2️⃣ သို့မဟုတ် အသံဖိုင် (mp3) တိုက်ရိုက် ပို့ပါ — နာမည် မထည့်ရင် "
+        "ဖိုင်ရဲ့ metadata ကနေ အလိုအလျောက် ယူပါမယ်\n\n"
+        "💡 ချန်နယ်ကနေ forward လုပ်ထားတဲ့ ဖိုင်လည်း အဆင်ပြေပါသည်။",
+        parse_mode="HTML",
+    )
     await callback.answer()
 
 
 @router.message(AdminStates.waiting_song_title)
 async def receive_song_title(message: Message, state: FSMContext):
-    title = message.text.strip()
-    await state.update_data(song_title=title)
-    await state.set_state(AdminStates.waiting_song_file)
-    await message.answer(
-        "📤 <b>အသံဖိုင် (.mp3) ကို ပို့ပါ:</b>\n\n"
-        "သီချင်းဖိုင်ကို chat ထဲ ပို့ပေးပါ။",
-        parse_mode="HTML",
-    )
+    if message.text and message.text.strip():
+        await state.update_data(song_title=message.text.strip())
+        await state.set_state(AdminStates.waiting_song_file)
+        await message.answer(
+            "📤 <b>အသံဖိုင် (.mp3) ကို ပို့ပါ:</b>\n\n"
+            "ချန်နယ်ကနေ forward လုပ်ထားတဲ့ အသံဖိုင်ကိုလည်း ပို့လို့ရပါသည်။",
+            parse_mode="HTML",
+        )
+        return
+    await _capture_song_file(message, state)
 
 
 @router.message(AdminStates.waiting_song_file, F.audio | F.document)
 async def receive_song_file(message: Message, state: FSMContext):
+    await _capture_song_file(message, state)
+
+
+async def _capture_song_file(message: Message, state: FSMContext):
     data = await state.get_data()
 
-    # Extract file_id
     if message.audio:
         file_id = message.audio.file_id
         file_size = message.audio.file_size or 0
@@ -312,34 +346,29 @@ async def receive_song_file(message: Message, state: FSMContext):
         file_id = message.document.file_id
         file_size = message.document.file_size or 0
         duration = 0
-        mime = message.document.mime_type or ""
-        if "audio" not in mime:
+        if "audio" not in (message.document.mime_type or ""):
             await message.answer("⚠️ <b>အသံဖိုင် သာ ပို့နိုင်ပါသည်။</b>", parse_mode="HTML")
             return
     else:
-        await message.answer("⚠️ အသံဖိုင် ပို့ပါ!")
+        await message.answer("⚠️ <b>အသံဖိုင် (.mp3) ပို့ပါ!</b>", parse_mode="HTML")
         return
 
-    title = data.get("song_title", "အမည်မသိ")
+    title = data.get("song_title") or "အမည်မသိ"
     album_id = data["song_album_id"]
-    await db.add_song(
-        title,
-        album_id,
-        file_id,
-        file_size,
-        duration,
-    )
+    album = await db.get_album(album_id)
+    album_name = album["name"] if album else ""
+    await db.add_song(title, album_id, file_id, file_size, duration)
     await state.clear()
     await message.answer(
-        f"✅ <b>သီချင်းထည့်ပြီးပါပြီ!</b>\n\n"
-        f"🎵 {title}",
+        f"✅ <b>သီချင်း ထည့်ပြီးပါပြီ!</b>\n\n"
+        f"🎵 <b>{html.escape(title)}</b>\n"
+        f"📀 {html.escape(album_name)}\n\n"
+        "ထပ်ထည့်လိုပါက \"သီချင်းထည့်မည်\" ကို နှိပ်ပြီး ချန်နယ်မှ သီချင်း forward ပို့ပါ 👇",
         parse_mode="HTML",
-        reply_markup=admin_main_kb(),
+        reply_markup=song_added_kb(album_id),
     )
 
     # Announce new release to channel
-    album = await db.get_album(album_id)
-    album_name = album["name"] if album else ""
     if CHANNEL_ID:
         try:
             await message.bot.send_audio(

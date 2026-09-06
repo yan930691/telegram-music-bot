@@ -131,6 +131,23 @@ def album_add_cat_kb(cats) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def album_added_kb(album_id) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🎵 ဤအယ်လ်ဘမ်ထဲ သီချင်းထည့်မည်", callback_data=f"add_song:{album_id}")
+    builder.button(text="📀 အယ်လ်ဘမ် ကြည့်ရန်", callback_data=f"album:{album_id}")
+    builder.button(text="🏠 အက်ဒမင် မီနူး", callback_data="admin_menu")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def song_added_kb(album_id) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🎵 နောက်တစ်ပုဒ် ထည့်မည်", callback_data=f"add_song:{album_id}")
+    builder.button(text="🏠 အက်ဒမင် မီနူး", callback_data="admin_menu")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
 def search_results_kb(songs) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for i, song in enumerate(songs, start=1):
