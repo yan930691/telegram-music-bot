@@ -71,6 +71,7 @@ def songs_kb(songs, album_id) -> InlineKeyboardMarkup:
             text=f"🎵 {i}. {song['title']}",
             callback_data=f"song:{song['_id']}",
         )
+    builder.button(text="▶️ အစကနေ နားထောင်မည်", callback_data=f"p:start:{album_id}")
     builder.button(text="📥 အယ်လ်ဘမ်အားလုံး ဒေါင်းလုဒ်", callback_data=f"dl_album:{album_id}")
     builder.button(text="🔙 နောက်သို့", callback_data=f"album:{album_id}")
     builder.adjust(1)
@@ -86,6 +87,19 @@ def album_songs_to_send(album_id, songs) -> InlineKeyboardMarkup:
         )
     builder.button(text="❌ ပိတ်မည်", callback_data="cancel")
     builder.adjust(1)
+    return builder.as_markup()
+
+
+def player_kb(album_id, index=1, total=1, paused=False) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    toggle = "▶️" if paused else "⏸"
+    builder.button(text="⏮", callback_data="p:prev")
+    builder.button(text=toggle, callback_data="p:toggle")
+    builder.button(text="⏭", callback_data="p:next")
+    builder.button(text=f"🎚 {index}/{total}", callback_data="p:list")
+    builder.button(text="🔙 အယ်လ်ဘမ်", callback_data=f"album:{album_id}")
+    builder.button(text="❌ ပိတ်မည်", callback_data="p:close")
+    builder.adjust(3, 1, 2)
     return builder.as_markup()
 
 
