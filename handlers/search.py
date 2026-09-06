@@ -8,8 +8,11 @@ from keyboards.inline import search_results_kb, main_menu_kb
 router = Router()
 
 # Simple flag-based search: user taps 🔍 then types
-# We'll treat any text message (not a command) as a search if it's short
 SEARCHING_USERS = set()
+
+
+def _in_search_mode(message: Message) -> bool:
+    return bool(message.from_user) and message.from_user.id in SEARCHING_USERS
 
 
 @router.message(Command("search"))
@@ -26,16 +29,12 @@ async def search_command(message: Message):
         )
 
 
-@router.message(F.text)
+@router.message(F.text, _in_search_mode)
 async def handle_text_message(message: Message):
     user_id = message.from_user.id
     text = message.text.strip()
-
-    # If user is in search mode, treat text as search query
-    if user_id in SEARCHING_USERS:
-        SEARCHING_USERS.discard(user_id)
-        await perform_search(message, text)
-        return
+    SEARCHING_USERS.discard(user_id)
+    await perform_search(message, text)
 
 
 async def perform_search(message: Message, query: str):
