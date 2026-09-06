@@ -10,7 +10,7 @@ from config import BOT_TOKEN, ADMIN_IDS
 from database import db
 
 # Import routers
-from handlers import start, music, search, admin
+from handlers import start, music, search, admin, channel
 
 # Import message/song state handlers
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -31,6 +31,7 @@ async def main():
     dp.include_router(music.router)
     dp.include_router(search.router)
     dp.include_router(admin.router)
+    dp.include_router(channel.router)
 
     # Connect MongoDB
     await db.connect()
