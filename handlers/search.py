@@ -2,6 +2,7 @@ from aiogram import Router, F
 from aiogram.types import Message
 from aiogram.filters import Command
 from database import db
+from config import ADMIN_IDS
 from keyboards.inline import search_results_kb, main_menu_kb
 
 router = Router()
@@ -47,7 +48,7 @@ async def perform_search(message: Message, query: str):
         await message.answer(
             f"😔 '{query}' နှင့် ကိုက်ညီသော သီချင်း မတွေ့ပါ။\n"
             "အခြားအမည် စမ်းကြည့်ပါ။",
-            reply_markup=main_menu_kb(),
+            reply_markup=main_menu_kb(message.from_user.id in ADMIN_IDS),
         )
         return
 

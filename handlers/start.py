@@ -28,7 +28,7 @@ async def start_handler(message: Message):
     await message.answer(
         get_welcome_text(),
         parse_mode="HTML",
-        reply_markup=main_menu_kb(),
+        reply_markup=main_menu_kb(message.from_user.id in ADMIN_IDS),
     )
 
 
@@ -39,7 +39,7 @@ async def help_handler(message: Message):
 
 @router.message(Command("menu"))
 async def menu_handler(message: Message):
-    await message.answer("🎵 မီနူး:", parse_mode="HTML", reply_markup=main_menu_kb())
+    await message.answer("🎵 မီနူး:", parse_mode="HTML", reply_markup=main_menu_kb(message.from_user.id in ADMIN_IDS))
 
 
 @router.message(Command("admin"))
@@ -78,7 +78,7 @@ async def back_to_main(callback: CallbackQuery):
     await callback.message.edit_text(
         "🎵 မီနူး:",
         parse_mode="HTML",
-        reply_markup=main_menu_kb(),
+        reply_markup=main_menu_kb(callback.from_user.id in ADMIN_IDS),
     )
     await callback.answer()
 

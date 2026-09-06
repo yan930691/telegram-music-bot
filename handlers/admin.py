@@ -1,5 +1,6 @@
 from aiogram import Router, F
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import Command
@@ -72,6 +73,63 @@ async def admin_add_album(callback: CallbackQuery, state: FSMContext):
         parse_mode="HTML",
         reply_markup=admin_delete_menu_kb(cats),  # reuse for selection, custom
     )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_add_song")
+async def admin_add_song(callback: CallbackQuery):
+    if not await is_admin(callback.from_user.id):
+        await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
+        return
+    cats = await db.get_categories()
+    if not cats:
+        await callback.answer("⚠️ အရင်ဆုံး အမျိုးအစားတစ်ခု ထည့်ပါ!")
+        return
+    builder = InlineKeyboardBuilder()
+    for cat in cats:
+        builder.button(text=f"🎵 {cat['name']}", callback_data=f"addsong_cat:{cat['_id']}")
+    builder.button(text="🔙 နောက်သို့", callback_data="admin_menu")
+    builder.adjust(1)
+    await callback.message.edit_text(
+        "🎵 <b>သီချင်းထည့်မည့် အမျိုးအစား ရွေးပါ:</b>",
+        parse_mode="HTML",
+        reply_markup=builder.as_markup(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("addsong_cat:"))
+async def addsong_cat(callback: CallbackQuery):
+    if not await is_admin(callback.from_user.id):
+        await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
+        return
+    cat_id = ObjectId(callback.data.split(":")[1])
+    albums = await db.get_albums(cat_id)
+    if not albums:
+        await callback.answer("⚠️ ဤအမျိုးအစားတွင် အယ်လ်ဘမ် မရှိပါ!")
+        return
+    builder = InlineKeyboardBuilder()
+    for album in albums:
+        builder.button(text=f"📀 {album['name']}", callback_data=f"addsong_album:{album['_id']}")
+    builder.button(text="🔙 နောက်သို့", callback_data="admin_add_song")
+    builder.adjust(1)
+    await callback.message.edit_text(
+        "📀 <b>သီချင်းထည့်မည့် အယ်လ်ဘမ် ရွေးပါ:</b>",
+        parse_mode="HTML",
+        reply_markup=builder.as_markup(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("addsong_album:"))
+async def addsong_album(callback: CallbackQuery, state: FSMContext):
+    if not await is_admin(callback.from_user.id):
+        await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
+        return
+    album_id = ObjectId(callback.data.split(":")[1])
+    await state.update_data(song_album_id=album_id)
+    await state.set_state(AdminStates.waiting_song_title)
+    await callback.message.answer("🎵 <b>သီချင်းအမည် ရိုက်ထည့်ပါ:</b>", parse_mode="HTML")
     await callback.answer()
 
 

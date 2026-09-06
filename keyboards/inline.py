@@ -2,13 +2,15 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 
-def main_menu_kb() -> InlineKeyboardMarkup:
+def main_menu_kb(is_admin=False) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="📀 အမျိုးအစားများ", callback_data="cats")
     builder.button(text="🎵 သီချင်းများ", callback_data="songs_all")
     builder.button(text="🔥 လူကြိုက်များ", callback_data="popular")
     builder.button(text="🔍 ရှာဖွေရန်", callback_data="search")
-    builder.adjust(2, 1, 1)
+    if is_admin:
+        builder.button(text="⚙️ အက်ဒမင် မီနူး", callback_data="admin_menu")
+    builder.adjust(2, 2, 1)
     return builder.as_markup()
 
 
@@ -97,10 +99,11 @@ def admin_main_kb() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="➕ အမျိုးအစား ထည့်", callback_data="admin_add_cat")
     builder.button(text="➕ အယ်လ်ဘမ် ထည့်", callback_data="admin_add_album")
+    builder.button(text="🎵 သီချင်းထည့်", callback_data="admin_add_song")
     builder.button(text="📊 စာရင်းဇယား", callback_data="admin_stats")
     builder.button(text="🗑 ဖျက်ရန်", callback_data="admin_delete_menu")
     builder.button(text="🔙 နောက်သို့", callback_data="back_main")
-    builder.adjust(2, 1, 1, 1)
+    builder.adjust(1, 1, 1, 1, 1)
     return builder.as_markup()
 
 
