@@ -119,6 +119,18 @@ def admin_delete_menu_kb(cats) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def album_add_cat_kb(cats) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for cat in cats:
+        builder.button(
+            text=f"📀 {cat['name']}",
+            callback_data=f"albadd_cat:{cat['_id']}",
+        )
+    builder.button(text="🔙 နောက်သို့", callback_data="admin_menu")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
 def search_results_kb(songs) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for i, song in enumerate(songs, start=1):

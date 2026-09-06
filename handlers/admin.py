@@ -12,6 +12,7 @@ from bson import ObjectId
 from keyboards.inline import (
     admin_main_kb,
     admin_delete_menu_kb,
+    album_add_cat_kb,
     categories_kb,
     albums_kb,
     back_to_cats_kb,
@@ -27,6 +28,7 @@ class AdminStates(StatesGroup):
     waiting_album_name = State()
     waiting_album_artist = State()
     waiting_album_cat = State()
+    waiting_album_cover = State()
     waiting_song_title = State()
     waiting_song_album = State()
     waiting_song_file = State()
@@ -71,7 +73,7 @@ async def admin_add_album(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer(
         "📀 <b>အယ်လ်ဘမ် ထည့်မည့် အမျိုးအစား ရွေးပါ:</b>",
         parse_mode="HTML",
-        reply_markup=admin_delete_menu_kb(cats),  # reuse for selection, custom
+        reply_markup=album_add_cat_kb(cats),
     )
     await callback.answer()
 
@@ -209,7 +211,7 @@ async def receive_cat_desc(message: Message, state: FSMContext):
     await message.answer("✅ <b>အမျိုးအစား ထည့်ပြီးပါပြီ!</b>", parse_mode="HTML", reply_markup=admin_main_kb())
 
 
-@router.callback_query(AdminStates.waiting_album_cat)
+@router.callback_query(AdminStates.waiting_album_cat, F.data.startswith("albadd_cat:"))
 async def choose_album_cat(callback: CallbackQuery, state: FSMContext):
     cat_id = ObjectId(callback.data.split(":")[1])
     await state.update_data(album_cat_id=cat_id)
@@ -228,17 +230,42 @@ async def receive_album_name(message: Message, state: FSMContext):
 
 @router.message(AdminStates.waiting_album_artist, F.text == "/skip")
 async def skip_album_artist(message: Message, state: FSMContext):
-    data = await state.get_data()
-    await db.add_album(data["album_name"], "", data["album_cat_id"])
-    await state.clear()
-    await message.answer("✅ <b>အယ်လ်ဘမ် ထည့်ပြီးပါပြီ!</b>", parse_mode="HTML", reply_markup=admin_main_kb())
+    await state.update_data(album_artist="")
+    await state.set_state(AdminStates.waiting_album_cover)
+    await message.answer("🖼 <b>အယ်လ်ဘမ် ကာဗာပုံ ပို့ပါ (မလိုရင် /skip):</b>", parse_mode="HTML")
 
 
 @router.message(AdminStates.waiting_album_artist)
 async def receive_album_artist(message: Message, state: FSMContext):
-    artist = message.text.strip()
+    await state.update_data(album_artist=message.text.strip())
+    await state.set_state(AdminStates.waiting_album_cover)
+    await message.answer("🖼 <b>အယ်လ်ဘမ် ကာဗာပုံ ပို့ပါ (မလိုရင် /skip):</b>", parse_mode="HTML")
+
+
+@router.message(AdminStates.waiting_album_cover, F.photo)
+async def receive_album_cover(message: Message, state: FSMContext):
+    cover = message.photo[-1].file_id
+    await _finish_add_album(message, state, cover)
+
+
+@router.message(AdminStates.waiting_album_cover, F.text == "/skip")
+async def skip_album_cover(message: Message, state: FSMContext):
+    await _finish_add_album(message, state, "")
+
+
+@router.message(AdminStates.waiting_album_cover)
+async def album_cover_wrong_type(message: Message):
+    await message.answer("🖼 <b>ကာဗာအတွက် ပုံ ပို့ပါ သို့မဟုတ် /skip နှိပ်ပါ:</b>", parse_mode="HTML")
+
+
+async def _finish_add_album(message: Message, state: FSMContext, cover=""):
     data = await state.get_data()
-    await db.add_album(data["album_name"], artist, data["album_cat_id"])
+    await db.add_album(
+        data.get("album_name", ""),
+        data.get("album_artist", ""),
+        data.get("album_cat_id"),
+        cover,
+    )
     await state.clear()
     await message.answer("✅ <b>အယ်လ်ဘမ် ထည့်ပြီးပါပြီ!</b>", parse_mode="HTML", reply_markup=admin_main_kb())
 

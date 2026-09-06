@@ -1,6 +1,15 @@
 from motor.motor_asyncio import AsyncIOMotorClient
 from config import MONGODB_URI, DB_NAME
 
+DEFAULT_CATEGORIES = [
+    "မြန်မာသီချင်း",
+    "အင်္ဂလိပ်သီချင်း",
+    "အသံဇာတ်လမ်း",
+    "ဓမ္မတရားတော်များ",
+    "စာပေစကားပြောပွဲ",
+    "အခြား",
+]
+
 
 class Database:
     def __init__(self):
@@ -22,6 +31,15 @@ class Database:
     # ---------------- Categories ----------------
     async def get_categories(self):
         return await self.db.categories.find().to_list(length=100)
+
+    async def seed_default_categories(self):
+        added = []
+        for name in DEFAULT_CATEGORIES:
+            existing = await self.db.categories.find_one({"name": name})
+            if not existing:
+                await self.db.categories.insert_one({"name": name, "description": ""})
+                added.append(name)
+        return added
 
     async def get_category(self, cat_id):
         return await self.db.categories.find_one({"_id": cat_id})
@@ -45,13 +63,13 @@ class Database:
     async def get_album(self, album_id):
         return await self.db.albums.find_one({"_id": album_id})
 
-    async def add_album(self, name, artist="", category_id=None, cover_url=""):
+    async def add_album(self, name, artist="", category_id=None, cover=""):
         return await self.db.albums.insert_one(
             {
                 "name": name,
                 "artist": artist,
                 "category_id": category_id,
-                "cover_url": cover_url,
+                "cover": cover,
                 "downloads": 0,
                 "created_at": __import__("datetime").datetime.utcnow(),
             }

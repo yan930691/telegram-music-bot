@@ -140,13 +140,24 @@ async def show_album(callback: CallbackQuery):
     text = f"📀 <b>{album['name']}</b>\n"
     if album.get("artist"):
         text += f"🎤 {album['artist']}\n"
-    text += f"📥 ဒေါင်းလုဒ်: {album.get('downloads', 0)}\n\n"
-    text += "လုပ်ဆောင်ချက် ရွေးချယ်ပါ:"
-    await callback.message.edit_text(
-        text,
-        parse_mode="HTML",
-        reply_markup=album_actions_kb(album_id, is_admin),
-    )
+    text += f"📥 ဒေါင်းလုဒ်: {album.get('downloads', 0)}"
+    if album.get("cover"):
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+        await callback.message.answer_photo(
+            photo=album["cover"],
+            caption=text,
+            parse_mode="HTML",
+            reply_markup=album_actions_kb(album_id, is_admin),
+        )
+    else:
+        await callback.message.edit_text(
+            text + "\n\nလုပ်ဆောင်ချက် ရွေးချယ်ပါ:",
+            parse_mode="HTML",
+            reply_markup=album_actions_kb(album_id, is_admin),
+        )
     await callback.answer()
 
 

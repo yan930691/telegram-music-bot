@@ -87,6 +87,10 @@ async def main():
         logging.exception("MongoDB connection failed")
         raise
 
+    added = await db.seed_default_categories()
+    if added:
+        logging.info("Seeded default categories: %s", ", ".join(added))
+
     logging.info("Bot starting. Admins: %s", ADMIN_IDS)
 
     try:
