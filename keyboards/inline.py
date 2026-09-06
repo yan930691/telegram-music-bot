@@ -148,6 +148,15 @@ def song_added_kb(album_id) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def adding_songs_kb(album_id) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ ပြီးပါပြီ", callback_data=f"finish_songs:{album_id}")
+    builder.button(text="❌ ဖျက်မည်", callback_data="cancel_batch")
+    builder.button(text="🏠 အက်ဒမင် မီနူး", callback_data="admin_menu")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
 def search_results_kb(songs) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for i, song in enumerate(songs, start=1):

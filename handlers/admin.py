@@ -15,6 +15,7 @@ from keyboards.inline import (
     album_add_cat_kb,
     album_added_kb,
     song_added_kb,
+    adding_songs_kb,
     categories_kb,
     albums_kb,
     back_to_cats_kb,
@@ -31,9 +32,7 @@ class AdminStates(StatesGroup):
     waiting_album_artist = State()
     waiting_album_cat = State()
     waiting_album_cover = State()
-    waiting_song_title = State()
-    waiting_song_album = State()
-    waiting_song_file = State()
+    adding_songs = State()
 
 
 async def is_admin(user_id) -> bool:
@@ -131,18 +130,7 @@ async def addsong_album(callback: CallbackQuery, state: FSMContext):
         await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
         return
     album_id = ObjectId(callback.data.split(":")[1])
-    album = await db.get_album(album_id)
-    album_name = album["name"] if album else ""
-    await state.update_data(song_album_id=album_id)
-    await state.set_state(AdminStates.waiting_song_title)
-    await callback.message.answer(
-        f"🎵 <b>သီချင်း ထည့်မည်</b>\n\n📀 <b>{html.escape(album_name)}</b>\n\n"
-        "1️⃣ သီချင်းအမည် ရိုက်ထည့်ပါ\n"
-        "2️⃣ သို့မဟုတ် အသံဖိုင် (mp3) တိုက်ရိုက် ပို့ပါ — နာမည် မထည့်ရင် "
-        "ဖိုင်ရဲ့ metadata ကနေ အလိုအလျောက် ယူပါမယ်\n\n"
-        "💡 ချန်နယ်ကနေ forward လုပ်ထားတဲ့ ဖိုင်လည်း အဆင်ပြေပါသည်။",
-        parse_mode="HTML",
-    )
+    await _begin_song_batch(callback.message, state, album_id)
     await callback.answer()
 
 
@@ -290,7 +278,24 @@ async def _finish_add_album(message: Message, state: FSMContext, cover=""):
     await message.answer(text, parse_mode="HTML", reply_markup=album_added_kb(album_id))
 
 
-# ---------------- Song upload ----------------
+# ---------------- Song upload (batch) ----------------
+
+async def _begin_song_batch(message: Message, state: FSMContext, album_id):
+    album = await db.get_album(album_id)
+    album_name = album["name"] if album else ""
+    await state.set_data({"song_album_id": album_id, "song_count": 0, "pending_title": None})
+    await state.set_state(AdminStates.adding_songs)
+    text = (
+        f"🎵 <b>သီချင်းများ ထည့်မည်</b>\n\n"
+        f"📀 <b>{html.escape(album_name)}</b>\n\n"
+        "1️⃣ ချန်နယ် (သို့) အခြားနေရာမှ အသံဖိုင်များကို forward/ပို့ပါ — "
+        "တစ်ခါတည်း အများကြီး ပို့လို့ရပါသည်\n"
+        "2️⃣ အားလုံး ပို့ပြီးရင် \"✅ ပြီးပါပြီ\" ခလုတ် နှိပ်ပါ\n\n"
+        "💡 သီချင်းတစ်ပုဒ်ချင်းစီ နာမည် သတ်မှတ်ချင်ရင် ဖိုင်မပို့ခင် "
+        "နာမည် ဦးစွာ ရိုက်ထည့်နိုင်ပါသည် (မထည့်ရင် ဖိုင်မှ metadata အတိုင်း ယူပါမည်)"
+    )
+    await message.answer(text, parse_mode="HTML", reply_markup=adding_songs_kb(album_id))
+
 
 @router.callback_query(F.data.startswith("add_song:"))
 async def start_song_upload(callback: CallbackQuery, state: FSMContext):
@@ -298,95 +303,103 @@ async def start_song_upload(callback: CallbackQuery, state: FSMContext):
         await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
         return
     album_id = ObjectId(callback.data.split(":")[1])
-    album = await db.get_album(album_id)
-    album_name = album["name"] if album else ""
-    await state.update_data(song_album_id=album_id)
-    await state.set_state(AdminStates.waiting_song_title)
-    await callback.message.answer(
-        f"🎵 <b>သီချင်း ထည့်မည်</b>\n\n📀 <b>{html.escape(album_name)}</b>\n\n"
-        "1️⃣ သီချင်းအမည် ရိုက်ထည့်ပါ\n"
-        "2️⃣ သို့မဟုတ် အသံဖိုင် (mp3) တိုက်ရိုက် ပို့ပါ — နာမည် မထည့်ရင် "
-        "ဖိုင်ရဲ့ metadata ကနေ အလိုအလျောက် ယူပါမယ်\n\n"
-        "💡 ချန်နယ်ကနေ forward လုပ်ထားတဲ့ ဖိုင်လည်း အဆင်ပြေပါသည်။",
-        parse_mode="HTML",
-    )
+    await _begin_song_batch(callback.message, state, album_id)
     await callback.answer()
 
 
-@router.message(AdminStates.waiting_song_title)
-async def receive_song_title(message: Message, state: FSMContext):
-    if message.text and message.text.strip():
-        await state.update_data(song_title=message.text.strip())
-        await state.set_state(AdminStates.waiting_song_file)
-        await message.answer(
-            "📤 <b>အသံဖိုင် (.mp3) ကို ပို့ပါ:</b>\n\n"
-            "ချန်နယ်ကနေ forward လုပ်ထားတဲ့ အသံဖိုင်ကိုလည်း ပို့လို့ရပါသည်။",
-            parse_mode="HTML",
-        )
-        return
-    await _capture_song_file(message, state)
-
-
-@router.message(AdminStates.waiting_song_file, F.audio | F.document)
-async def receive_song_file(message: Message, state: FSMContext):
-    await _capture_song_file(message, state)
-
-
-async def _capture_song_file(message: Message, state: FSMContext):
+@router.message(AdminStates.adding_songs, F.audio | F.document)
+async def add_batch_song(message: Message, state: FSMContext):
     data = await state.get_data()
+    album_id = data["song_album_id"]
+    custom_title = data.get("pending_title") or ""
 
     if message.audio:
         file_id = message.audio.file_id
         file_size = message.audio.file_size or 0
         duration = message.audio.duration or 0
-        if not data.get("song_title") and message.audio.title:
-            await state.update_data(song_title=message.audio.title)
-            data["song_title"] = message.audio.title
-    elif message.document:
-        file_id = message.document.file_id
-        file_size = message.document.file_size or 0
-        duration = 0
+        auto_title = message.audio.title or ""
+    else:
         if "audio" not in (message.document.mime_type or ""):
             await message.answer("⚠️ <b>အသံဖိုင် သာ ပို့နိုင်ပါသည်။</b>", parse_mode="HTML")
             return
-    else:
-        await message.answer("⚠️ <b>အသံဖိုင် (.mp3) ပို့ပါ!</b>", parse_mode="HTML")
-        return
+        file_id = message.document.file_id
+        file_size = message.document.file_size or 0
+        duration = 0
+        auto_title = message.document.file_name or ""
 
-    title = data.get("song_title") or "အမည်မသိ"
-    album_id = data["song_album_id"]
-    album = await db.get_album(album_id)
-    album_name = album["name"] if album else ""
+    title = custom_title or auto_title or "အမည်မသိ"
+    if not custom_title and title.lower().endswith((".mp3", ".m4a", ".ogg", ".wav")):
+        title = title.rsplit(".", 1)[0]
+
     await db.add_song(title, album_id, file_id, file_size, duration)
-    await state.clear()
+    count = data.get("song_count", 0) + 1
+    await state.update_data(song_count=count, pending_title=None)
+
     await message.answer(
-        f"✅ <b>သီချင်း ထည့်ပြီးပါပြီ!</b>\n\n"
+        f"📥 <b>သီချင်း ({count})</b> ✅\n\n"
         f"🎵 <b>{html.escape(title)}</b>\n"
-        f"📀 {html.escape(album_name)}\n\n"
-        "ထပ်ထည့်လိုပါက \"သီချင်းထည့်မည်\" ကို နှိပ်ပြီး ချန်နယ်မှ သီချင်း forward ပို့ပါ 👇",
+        "ထပ်ပို့ပါ — အားလုံးပြီးရင် \"✅ ပြီးပါပြီ\" နှိပ်ပါ 👇",
         parse_mode="HTML",
-        reply_markup=song_added_kb(album_id),
+        reply_markup=adding_songs_kb(album_id),
     )
 
-    # Announce new release to channel
-    if CHANNEL_ID:
-        try:
-            await message.bot.send_audio(
-                chat_id=CHANNEL_ID,
-                audio=file_id,
-                title=title,
-                caption=(
-                    "🎵 <b>သီချင်းအသစ် ထွက်ရှိပါပြီ!</b>\n\n"
-                    f"🎧 <b>{html.escape(title)}</b>\n"
-                    f"📀 {html.escape(album_name)}\n\n"
-                    "🤖 Bot မှ ရယူလိုပါက အောက်ပါ bot သို့ ဝင်ရောက်ပါ"
-                ),
-                parse_mode="HTML",
-            )
-        except Exception as e:
-            logging.warning(f"Channel announcement failed: {e}")
+
+@router.message(AdminStates.adding_songs, F.text)
+async def set_batch_song_title(message: Message, state: FSMContext):
+    if message.text.startswith("/"):
+        return
+    data = await state.get_data()
+    await state.update_data(pending_title=message.text.strip())
+    await message.answer(
+        f"🎵 နာမည် သတ်မှတ်ပြီ — <b>{html.escape(message.text.strip())}</b>\n"
+        "အခု သီချင်းဖိုင် ပို့ပါ 👇",
+        parse_mode="HTML",
+        reply_markup=adding_songs_kb(data["song_album_id"]),
+    )
 
 
-@router.message(AdminStates.waiting_song_file)
-async def receive_song_file_wrong_type(message: Message):
-    await message.answer("⚠️ <b>အသံဖိုင် (.mp3) ကို ပို့ပါ!</b>", parse_mode="HTML")
+@router.message(AdminStates.adding_songs)
+async def batch_add_wrong_type(message: Message):
+    await message.answer(
+        "⚠️ <b>အသံဖိုင် (.mp3) ပို့ပါ</b> သို့မဟုတ် \"✅ ပြီးပါပြီ\" ခလုတ် နှိပ်ပါ။",
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data.startswith("finish_songs:"))
+async def finish_batch(callback: CallbackQuery, state: FSMContext):
+    album_id = ObjectId(callback.data.split(":")[1])
+    data = await state.get_data()
+    count = data.get("song_count", 0)
+    album = await db.get_album(album_id)
+    album_name = album["name"] if album else ""
+    await state.clear()
+
+    if count == 0:
+        text = (
+            "⚠️ <b>သီချင်း မထည့်ရသေးပါ!</b>\n\n"
+            "အသံဖိုင်များ forward ပို့ပြီးမှ \"✅ ပြီးပါပြီ\" ခလုတ် နှိပ်ပါ။"
+        )
+        kb = album_added_kb(album_id)
+    else:
+        text = (
+            f"✅ <b>ပြီးပါပြီ!</b>\n\n"
+            f"📀 {html.escape(album_name)}\n"
+            f"🎵 ထည့်ပြီး သီချင်း: <b>{count}</b> ပုဒ်\n\n"
+            "🎧 User များ အခု album ထဲမှ နားဆင် / ဒေါင်းလုဒ်လို့ ရပါပြီ!"
+        )
+        kb = song_added_kb(album_id)
+    await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "cancel_batch")
+async def cancel_batch(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.answer(
+        "❌ <b>ထည့်ခြင်း ရပ်လိုက်ပါပြီ</b>\n\n"
+        "(ထည့်ပြီးသား သီချင်းများမှာ သိမ်းထားပြီးသား ဖြစ်ပါသည်)",
+        parse_mode="HTML",
+        reply_markup=admin_main_kb(),
+    )
+    await callback.answer()
