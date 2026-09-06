@@ -3,8 +3,10 @@ from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import Command
+import logging
+import html
 from database import db
-from config import ADMIN_IDS
+from config import ADMIN_IDS, CHANNEL_ID
 from bson import ObjectId
 from keyboards.inline import (
     admin_main_kb,
@@ -249,6 +251,26 @@ async def receive_song_file(message: Message, state: FSMContext):
         parse_mode="HTML",
         reply_markup=admin_main_kb(),
     )
+
+    # Announce new release to channel
+    album = await db.get_album(album_id)
+    album_name = album["name"] if album else ""
+    if CHANNEL_ID:
+        try:
+            await message.bot.send_audio(
+                chat_id=CHANNEL_ID,
+                audio=file_id,
+                title=title,
+                caption=(
+                    "🎵 <b>သီချင်းအသစ် ထွက်ရှိပါပြီ!</b>\n\n"
+                    f"🎧 <b>{html.escape(title)}</b>\n"
+                    f"📀 {html.escape(album_name)}\n\n"
+                    "🤖 Bot မှ ရယူလိုပါက အောက်ပါ bot သို့ ဝင်ရောက်ပါ"
+                ),
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            logging.warning(f"Channel announcement failed: {e}")
 
 
 @router.message(AdminStates.waiting_song_file)

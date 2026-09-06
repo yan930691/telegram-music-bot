@@ -25,7 +25,10 @@ BOT_TOKEN=YOUR_BOT_TOKEN
 MONGODB_URI=mongodb+srv://USER:Pass@cluster.mongodb.net/
 DB_NAME=music_bot
 ADMIN_IDS=YOUR_TELEGRAM_ID
+CHANNEL_ID=@your_music_channel
 ```
+
+> 💡 `CHANNEL_ID` — သီချင်းအသစ်တင်တိုင်း notification ပို့မည့် channel (username သို့မဟုတ် numeric ID, ဥပမာ `-1001234567890`)။ Bot ကို channel ထဲ **admin** အနေနဲ့ ထည့်ထားဖို့ လိုပါသည်။ မသုံးချင်ရင် ဗလာထားခဲ့ပါ။
 
 ### 3. Get BOT_TOKEN
 1. Telegram တွင် `@BotFather` သို့ သွားပါ
@@ -48,7 +51,7 @@ python bot.py
 ### Option A: Blueprint (render.yaml)
 1. Render Dashboard → **New** → **Blueprint**
 2. Repository ကို ချိတ်ဆက်ပါ
-3. Env variables များကို ထည့်ပါ (BOT_TOKEN, MONGODB_URI, ADMIN_IDS)
+3. Env variables များကို ထည့်ပါ (BOT_TOKEN, MONGODB_URI, ADMIN_IDS, CHANNEL_ID)
 4. **Apply** → Bot run ပါလိမ့်မည်
 
 ### Option B: Manual
@@ -56,7 +59,7 @@ python bot.py
 2. Repository ချိတ်ဆက်ပါ
 3. **Build Command:** `pip install -r requirements.txt`
 4. **Start Command:** `python bot.py`
-5. Env variables: `BOT_TOKEN`, `MONGODB_URI`, `DB_NAME`, `ADMIN_IDS`
+5. Env variables: `BOT_TOKEN`, `MONGODB_URI`, `DB_NAME`, `ADMIN_IDS`, `CHANNEL_ID`
 6. **Create Web Service**
 
 ## 👍 GitHub Push
