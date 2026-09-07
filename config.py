@@ -14,8 +14,14 @@ CHANNEL_ID = os.getenv("CHANNEL_ID", "")
 # Optional: enables Shazam-style song recognition (voice / video note)
 AUDD_API_TOKEN = os.getenv("AUDD_API_TOKEN", "")
 
-# Optional: restrict web search/external download to only these user IDs (empty = everyone)
+# Optional: restricts web search/external download to only these user IDs (empty = everyone)
 ALLOWED_USERS = [int(x.strip()) for x in os.getenv("ALLOWED_USERS", "").split(",") if x.strip()]
+
+# Optional: YouTube Data API v3 key -> makes web search reliable
+YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "")
+
+# Optional: proxy for yt-dlp downloads, e.g. "http://user:pass@host:port"
+YTDL_PROXY = os.getenv("YTDL_PROXY", "")
 
 MUSIC_DIR = os.path.join(os.path.dirname(__file__), "data", "music")
 os.makedirs(MUSIC_DIR, exist_ok=True)

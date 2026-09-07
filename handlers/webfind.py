@@ -11,7 +11,13 @@ from aiogram import Router, F
 from aiogram.types import CallbackQuery, Message, FSInputFile
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from config import AUDD_API_TOKEN, ALLOWED_USERS, ADMIN_IDS
+from config import (
+    AUDD_API_TOKEN,
+    ALLOWED_USERS,
+    ADMIN_IDS,
+    YOUTUBE_API_KEY,
+    YTDL_PROXY,
+)
 from keyboards.inline import main_menu_kb
 
 router = Router()
@@ -58,13 +64,90 @@ def web_results_kb(entries=()):
     return builder.as_markup()
 
 
+def _iso_duration_to_seconds(d):
+    m = re.match(r"PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?", d or "")
+    if not m:
+        return None
+    h, mn, s = (int(x or 0) for x in m.groups())
+    return h * 3600 + mn * 60 + s
+
+
+async def _yt_search_api(query: str, n: int = 5):
+    if not YOUTUBE_API_KEY:
+        raise RuntimeError("no api key")
+    search_url = "https://www.googleapis.com/youtube/v3/search"
+    params = {
+        "part": "snippet",
+        "q": query,
+        "type": "video",
+        "videoCategoryId": "10",  # Music
+        "maxResults": n,
+        "key": YOUTUBE_API_KEY,
+    }
+    async with aiohttp.ClientSession() as session:
+        async with session.get(
+            search_url,
+            params=params,
+            timeout=aiohttp.ClientTimeout(total=30),
+        ) as resp:
+            j = await resp.json()
+        if "error" in j:
+            raise RuntimeError(str(j["error"]))
+        items = [it for it in j.get("items", []) if (it.get("id") or {}).get("videoId")]
+        video_ids = [it["id"]["videoId"] for it in items]
+        if not video_ids:
+            return []
+
+        # fetch durations in one extra call
+        durations = {}
+        vurl = "https://www.googleapis.com/youtube/v3/videos"
+        vparams = {
+            "part": "contentDetails",
+            "id": ",".join(video_ids),
+            "key": YOUTUBE_API_KEY,
+        }
+        async with session.get(
+            vurl,
+            params=vparams,
+            timeout=aiohttp.ClientTimeout(total=30),
+        ) as vresp:
+            vj = await vresp.json()
+        for v in vj.get("items", []):
+            durations[v["id"]] = _iso_duration_to_seconds(
+                v.get("contentDetails", {}).get("duration")
+            )
+
+    entries = []
+    for it in items:
+        vid = it["id"]["videoId"]
+        entries.append(
+            {
+                "title": it["snippet"].get("title"),
+                "uploader": it["snippet"].get("channelTitle"),
+                "duration": durations.get(vid),
+                "webpage_url": f"https://www.youtube.com/watch?v={vid}",
+            }
+        )
+    return entries
+
+
 async def _yt_search(query: str, n: int = 5):
+    # Prefer reliable YouTube Data API when a key is set
+    if YOUTUBE_API_KEY:
+        try:
+            entries = await _yt_search_api(query, n)
+            if entries:
+                return entries
+        except Exception as e:
+            logging.warning(f"YouTube API search failed, falling back to yt-dlp: {e}")
+
     def _run():
         opts = {
             "quiet": True,
             "no_warnings": True,
             "skip_download": True,
             "extract_flat": "in_playlist",
+            "socket_timeout": 30,
         }
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(f"ytsearch{n}:{query}", download=False)
@@ -82,7 +165,16 @@ def _build_dl_opts(outdir: str):
         "no_warnings": True,
         "noprogress": True,
         "nooverwrites": True,
+        "socket_timeout": 30,
+        # try several YouTube clients in order to dodge bot-detection blocks
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["default", "web_safari", "android", "tv", "ios"]
+            }
+        },
     }
+    if YTDL_PROXY:
+        opts["proxy"] = YTDL_PROXY
     if shutil.which("ffmpeg"):
         opts["postprocessors"] = [
             {
@@ -277,8 +369,9 @@ async def _perform_download(message: Message, url: str, user_id=None):
     except Exception as e:
         logging.warning(f"Web download failed: {e}")
         await message.answer(
-            "😔 <b>ဒေါင်းလုဒ် မရပါ။</b>\n\n"
-            "YouTube ၏ ကန့်သတ်မှု သို့မဟုတ် ဖိုင် မရှိတော့ခြင်း ဖြစ်နိုင်သည်။\n"
+            f"😔 <b>ဒေါင်းလုဒ် မရပါ။</b>\n\n"
+            "YouTube ၏ ကန့်သတ်မှု (bot/ဒေတာစင်တာ IP block) သို့မဟုတ် ဖိုင် မရှိတော့ခြင်း ဖြစ်နိုင်သည်။\n"
+            f"👉 YouTube မှာ ဖွင့်ကြည့်ရန်: {url}\n"
             "အခြား ရလဒ် သို့မဟုတ် အခြား link စမ်းကြည့်ပါ။"
         )
     finally:
