@@ -7,6 +7,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiohttp import web
+import aiohttp
 
 from config import BOT_TOKEN, ADMIN_IDS, MONGODB_URI, BUILD_VERSION
 from database import db
@@ -40,6 +41,27 @@ async def _start_health_server():
     await site.start()
     logging.info("Health server started on port %s", port)
     return runner
+
+
+async def _keepalive_loop():
+    """Ping our own URL so Render free tier doesn't auto-sleep after 15 min."""
+    url = os.getenv("RENDER_EXTERNAL_URL", "").rstrip("/")
+    if not url:
+        logging.info("Keep-alive disabled (no RENDER_EXTERNAL_URL env set)")
+        return
+    session = aiohttp.ClientSession()
+    try:
+        while True:
+            await asyncio.sleep(240)
+            try:
+                async with session.get(
+                    f"{url}/health", timeout=aiohttp.ClientTimeout(total=30)
+                ) as resp:
+                    logging.info("Keep-alive ping -> %s", resp.status)
+            except Exception as e:
+                logging.warning("Keep-alive ping failed: %s", e)
+    finally:
+        await session.close()
 
 
 def validate_config():
@@ -91,6 +113,8 @@ async def main():
     added = await db.seed_default_categories()
     if added:
         logging.info("Seeded default categories: %s", ", ".join(added))
+
+    asyncio.create_task(_keepalive_loop())
 
     logging.info("Bot starting. Admins: %s", ADMIN_IDS)
 
