@@ -2,7 +2,8 @@ from aiogram import Router, F
 from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup, StateFilter
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.filters.state import StateFilter
 from aiogram.filters import Command
 import logging
 import html
