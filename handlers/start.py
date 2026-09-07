@@ -77,12 +77,12 @@ async def show_categories(callback: CallbackQuery):
     cats = await db.get_categories()
     if not cats:
         await callback.message.edit_text(
-            "📂 အမျိုးအစားများ မရှိသေးပါ။",
+            "📂 သီချင်းအမျိုးအစားများ မရှိသေးပါ။",
             reply_markup=categories_kb([]),
         )
     else:
         await callback.message.edit_text(
-            "📂 <b>အမျိုးအစားများ ရွေးချယ်ပါ:</b>",
+            "📂 <b>သီချင်းအမျိုးအစားများ ရွေးချယ်ပါ:</b>",
             parse_mode="HTML",
             reply_markup=categories_kb(cats),
         )
@@ -138,9 +138,47 @@ async def show_albums(callback: CallbackQuery):
 async def albums_back(callback: CallbackQuery):
     cats = await db.get_categories()
     await callback.message.edit_text(
-        "📂 <b>အမျိုးအစားများ ရွေးချယ်ပါ:</b>",
+        "📂 <b>သီချင်းအမျိုးအစားများ ရွေးချယ်ပါ:</b>",
         parse_mode="HTML",
         reply_markup=categories_kb(cats),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "artists_all")
+async def show_artists(callback: CallbackQuery):
+    from keyboards.inline import artists_kb
+    artists = await db.get_all_artists()
+    if not artists:
+        await callback.answer("🎤 အနုပညာရှင် မရှိသေးပါ!")
+        return
+    await callback.message.edit_text(
+        "🎤 <b>အနုပညာရှင်များ ({0}):</b>\n\n"
+        "အဆိုတော် ရွေးပါက ၎င်း၏ အယ်လ်ဘမ်များ ပြပါမည်:".format(len(artists)),
+        parse_mode="HTML",
+        reply_markup=artists_kb(artists),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("artist:"))
+async def show_artist(callback: CallbackQuery):
+    from keyboards.inline import artist_albums_kb
+    artist_id = ObjectId(callback.data.split(":")[1])
+    artist = await db.get_artist(artist_id)
+    if not artist:
+        await callback.answer("❌ အနုပညာရှင် မတွေ့ပါ!")
+        return
+    albums = await db.get_artist_albums(artist_id)
+    if not albums:
+        await callback.answer("📀 ဤအနုပညာရှင်အတွက် အယ်လ်ဘမ် မရှိသေးပါ!")
+        return
+    await callback.message.edit_text(
+        f"🎤 <b>{artist['name']}</b>\n"
+        f"📀 အယ်လ်ဘမ်: {len(albums)}\n\n"
+        "အယ်လ်ဘမ် ရွေးပါ:",
+        parse_mode="HTML",
+        reply_markup=artist_albums_kb(albums, artist_id),
     )
     await callback.answer()
 
@@ -205,7 +243,7 @@ async def show_all_songs(callback: CallbackQuery):
         await callback.answer("📂 အမျိုးအစား မရှိသေးပါ!")
         return
     await callback.message.edit_text(
-        "🎵 <b>အမျိုးအစားရွေးပြီး သီချင်းများ ကြည့်နိုင်ပါသည်:</b>",
+        "🎵 <b>သီချင်းအမျိုးအစားရွေးပြီး သီချင်းများ ကြည့်နိုင်ပါသည်:</b>",
         parse_mode="HTML",
         reply_markup=categories_kb(cats),
     )

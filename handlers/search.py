@@ -24,7 +24,7 @@ async def search_command(message: Message):
     else:
         SEARCHING_USERS.add(message.from_user.id)
         await message.answer(
-            "🔍 <b>ရှာဖွေလိုသော သီချင်းအမည် ရိုက်ထည့်ပါ:</b>",
+            "🔍 <b>ရှာဖွေလိုသော အဆိုတော် သို့မဟုတ် သီချင်းအမည် ရိုက်ထည့်ပါ:</b>",
             parse_mode="HTML",
         )
 
@@ -40,6 +40,16 @@ async def handle_text_message(message: Message):
 async def perform_search(message: Message, query: str):
     if not query:
         await message.answer("❌ ရှာဖွေရန် အမည် ထည့်ပါ။")
+        return
+
+    artists = await db.search_artists(query)
+    if artists:
+        from keyboards.inline import artists_kb
+        await message.answer(
+            f"🔍 <b>'{query}' အတွက် အနုပညာရှင် ({len(artists)}):</b>",
+            parse_mode="HTML",
+            reply_markup=artists_kb(artists),
+        )
         return
 
     songs = await db.search_songs(query)

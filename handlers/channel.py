@@ -5,6 +5,7 @@ from aiogram.types import Message
 
 from database import db
 from config import CHANNEL_ID
+from utils.formatters import split_caption
 
 router = Router()
 
@@ -19,14 +20,6 @@ async def _get_bot_id(message: Message):
         me = await message.bot.get_me()
         _bot_id = me.id
     return _bot_id
-
-
-async def get_or_create_album(name: str):
-    album = await db.db.albums.find_one({"name": name})
-    if album:
-        return album
-    result = await db.add_album(name, "", None)
-    return await db.db.albums.find_one({"_id": result.inserted_id})
 
 
 @router.channel_post(F.audio | F.document)
@@ -55,14 +48,21 @@ async def on_channel_audio(message: Message):
             return
 
         caption = message.caption or ""
+        parts = split_caption(caption)
 
-        # Caption format: "AlbumName | SongTitle"
+        # Caption formats: "AlbumName | SongTitle" or "AlbumName | SongTitle | Artist"
         album_name = None
         custom_title = None
-        if "|" in caption:
-            parts = caption.split("|", 1)
-            album_name = parts[0].strip()
-            custom_title = parts[1].strip()
+        artist_name = performer
+        if len(parts) >= 3:
+            album_name = parts[0]
+            custom_title = parts[1]
+            artist_name = parts[2] or performer
+        elif len(parts) == 2:
+            album_name = parts[0]
+            custom_title = parts[1]
+        elif len(parts) == 1:
+            album_name = parts[0]
 
         if custom_title:
             title = custom_title
@@ -77,12 +77,26 @@ async def on_channel_audio(message: Message):
             await message.reply("ℹ️ ဤသီချင်းကို သိမ်းပြီးသား ဖြစ်ပါသည်။")
             return
 
-        album = await get_or_create_album(album_name)
-        await db.add_song(title, album["_id"], file_id, file_size, duration)
+        artist = await db.get_or_create_artist(artist_name or "အမည်မသိ")
+        album = await db.get_or_create_album(
+            album_name,
+            artist=artist["name"],
+            category_id=None,
+            artist_id=artist["_id"],
+        )
+        await db.add_song(
+            title,
+            album["_id"],
+            file_id,
+            file_size,
+            duration,
+            artist_id=artist["_id"],
+        )
 
         await message.reply(
             f"✅ <b>သီချင်းအသစ် ရောက်ရှိပါပြီ!</b>\n\n"
             f"🎧 {title}\n"
+            f"🎤 {artist['name']}\n"
             f"📀 {album_name}\n\n"
             "🤖 Bot မှ ရယူလိုပါက bot chat သို့ ဝင်ရောက်ပါ",
             parse_mode="HTML",

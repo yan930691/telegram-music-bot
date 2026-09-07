@@ -4,15 +4,27 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 def main_menu_kb(is_admin=False) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="📀 အမျိုးအစားများ", callback_data="cats")
+    builder.button(text="📀 သီချင်းအမျိုးအစားများ", callback_data="cats")
+    builder.button(text="🎤 အနုပညာရှင်များ", callback_data="artists_all")
     builder.button(text="🎵 သီချင်းများ", callback_data="songs_all")
     builder.button(text="🔥 လူကြိုက်များ", callback_data="popular")
     builder.button(text="🆕 အသစ်များ", callback_data="songs_new")
     builder.button(text="🔍 ရှာဖွေရန်", callback_data="search")
-    builder.button(text="🌐 Web သီချင်းရှာ", callback_data="web_search")
     if is_admin:
         builder.button(text="⚙️ အက်ဒမင် မီနူး", callback_data="admin_menu")
     builder.adjust(2, 2, 2, 1)
+    return builder.as_markup()
+
+
+def artists_kb(artists) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for artist in artists:
+        builder.button(
+            text=f"🎤 {artist['name']}",
+            callback_data=f"artist:{artist['_id']}",
+        )
+    builder.button(text="🔙 နောက်သို့", callback_data="back_main")
+    builder.adjust(1)
     return builder.as_markup()
 
 
@@ -50,6 +62,19 @@ def albums_kb(albums, cat_id) -> InlineKeyboardMarkup:
             callback_data=f"album:{album['_id']}",
         )
     builder.button(text="🔙 နောက်သို့", callback_data=f"cat:{cat_id}")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def artist_albums_kb(albums, artist_id) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for album in albums:
+        title = album["name"]
+        builder.button(
+            text=f"📀 {title}",
+            callback_data=f"album:{album['_id']}",
+        )
+    builder.button(text="🔙 နောက်သို့", callback_data=f"artist:{artist_id}")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -114,12 +139,33 @@ def back_to_cats_kb() -> InlineKeyboardMarkup:
 def admin_main_kb() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="➕ အမျိုးအစား ထည့်", callback_data="admin_add_cat")
-    builder.button(text="➕ အယ်လ်ဘမ် ထည့်", callback_data="admin_add_album")
-    builder.button(text="🎵 သီချင်းထည့်", callback_data="admin_add_song")
+    builder.button(text="⬆️ Album + သီချင်းတင်ရန်", callback_data="admin_upload")
+    builder.button(text="🎵 အယ်လ်ဘမ်ထဲ သီချင်းထည့်", callback_data="admin_add_song")
     builder.button(text="📊 စာရင်းဇယား", callback_data="admin_stats")
     builder.button(text="🗑 ဖျက်ရန်", callback_data="admin_delete_menu")
     builder.button(text="🔙 နောက်သို့", callback_data="back_main")
-    builder.adjust(1, 1, 1, 1, 1)
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def upload_cat_kb(cats) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for cat in cats:
+        builder.button(
+            text=f"📀 {cat['name']}",
+            callback_data=f"upcat:{cat['_id']}",
+        )
+    builder.button(text="🔙 နောက်သို့", callback_data="admin_menu")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def upload_batch_kb() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ ပြီးပါပြီ", callback_data="finish_upload")
+    builder.button(text="❌ ရပ်လိုက်မည်", callback_data="cancel_upload")
+    builder.button(text="🏠 အက်ဒမင် မီနူး", callback_data="admin_menu")
+    builder.adjust(1)
     return builder.as_markup()
 
 

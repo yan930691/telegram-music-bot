@@ -2,10 +2,11 @@ from aiogram import Router, F
 from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.state import State, StatesGroup, StateFilter
 from aiogram.filters import Command
 import logging
 import html
+
 from database import db
 from config import ADMIN_IDS, CHANNEL_ID
 from bson import ObjectId
@@ -19,7 +20,10 @@ from keyboards.inline import (
     categories_kb,
     albums_kb,
     back_to_cats_kb,
+    upload_cat_kb,
+    upload_batch_kb,
 )
+from utils.formatters import split_caption
 
 router = Router()
 admin_router = router  # all callbacks gated by is_admin check
@@ -33,6 +37,8 @@ class AdminStates(StatesGroup):
     waiting_album_cat = State()
     waiting_album_cover = State()
     adding_songs = State()
+    upload_cat = State()
+    upload_music = State()
 
 
 async def is_admin(user_id) -> bool:
@@ -181,6 +187,316 @@ async def delete_category(callback: CallbackQuery):
         parse_mode="HTML",
         reply_markup=admin_delete_menu_kb(cats),
     )
+
+
+# ---------------- New: Upload album with auto artist grouping ----------------
+
+async def _ask_upload_category(callback: CallbackQuery):
+    cats = await db.get_categories()
+    if not cats:
+        await callback.answer("⚠️ ဦးစွာ အမျိုးအစား (category) ထည့်ပါ!")
+        return
+    await callback.message.edit_text(
+        "📀 <b>Album တင်မည့် အမျိုးအစား ရွေးပါ:</b>",
+        parse_mode="HTML",
+        reply_markup=upload_cat_kb(cats),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_upload")
+async def admin_upload(callback: CallbackQuery):
+    if not await is_admin(callback.from_user.id):
+        await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
+        return
+    await _ask_upload_category(callback)
+
+
+@router.message(Command("upload"))
+async def upload_command(message: Message, state: FSMContext):
+    if not await is_admin(message.from_user.id):
+        await message.answer("❌ သင်သည် အက်ဒမင် မဟုတ်ပါ။")
+        return
+    cats = await db.get_categories()
+    if not cats:
+        await message.answer("⚠️ ဦးစွာ အမျိုးအစား (category) ထည့်ပါ!")
+        return
+    await message.answer(
+        "📀 <b>Album တင်မည့် အမျိုးအစား ရွေးပါ:</b>",
+        parse_mode="HTML",
+        reply_markup=upload_cat_kb(cats),
+    )
+
+
+@router.callback_query(F.data.startswith("upcat:"))
+async def upload_choose_cat(callback: CallbackQuery, state: FSMContext):
+    if not await is_admin(callback.from_user.id):
+        await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
+        return
+    cat_id = ObjectId(callback.data.split(":")[1])
+    await state.set_data(
+        {"cat_id": cat_id, "cover": "", "album_name": "", "pending_songs": []}
+    )
+    await state.set_state(AdminStates.upload_music)
+    await callback.message.answer(
+        "🎼 <b>Album တင်ခြင်း စတင်နေသည်</b>\n\n"
+        "1️⃣ ကာဗာပုံ (optional): photo ပို့ပါ — caption ထဲ Album နာမည် ရေးနိုင်သည်\n"
+        "   (ပုံမလိုရင် ဤအဆင့် ကျော်နိုင်သည်)\n"
+        "2️⃣ သီချင်းများ: audio file / forward ပို့ပါ — အားလုံး ပို့ပြီးရင် "
+        "\"✅ ပြီးပါပြီ\" နှိပ်ပါ\n\n"
+        "💡 <b>Artist grouping:</b> သီချင်း audio ရဲ့ performer (or caption "
+        "'Song | Artist') နဲ့ အနုပညာရှင်ကို ခွဲသိမ်းပါမည် — name တူရင် "
+        "အနုပညာရှင် တစ်ဦးအောက် ပြန်စုပါမည်",
+        parse_mode="HTML",
+        reply_markup=upload_batch_kb(),
+    )
+    await callback.answer()
+
+
+async def _parse_song_meta(message: Message, current_album: str):
+    """Return (title, artist, album_from_caption) for an audio/document message."""
+    caption_parts = split_caption(message.caption)
+    if message.audio:
+        title = message.audio.title or ""
+        artist = message.audio.performer or ""
+        file_id = message.audio.file_id
+        file_size = message.audio.file_size or 0
+        duration = message.audio.duration or 0
+        default_album = current_album
+    else:
+        title = message.document.file_name or ""
+        artist = ""
+        file_id = message.document.file_id
+        file_size = message.document.file_size or 0
+        duration = 0
+        default_album = current_album
+
+    # Caption formats: "Song | Artist"  or  "Album | Song | Artist"
+    if len(caption_parts) >= 3:
+        default_album = caption_parts[0]
+        title = caption_parts[1] or title
+        artist = caption_parts[2] or artist
+    elif len(caption_parts) == 2:
+        title = caption_parts[0] or title
+        artist = caption_parts[1] or artist
+    elif len(caption_parts) == 1:
+        title = caption_parts[0] or title
+
+    if not title:
+        title = "အမည်မသိ"
+    if title.lower().endswith((".mp3", ".m4a", ".ogg", ".wav", ".opus")):
+        title = title.rsplit(".", 1)[0]
+    return title, artist.strip(), default_album, file_id, file_size, duration
+
+
+@router.message(AdminStates.upload_music, F.photo)
+async def upload_cover(message: Message, state: FSMContext):
+    data = await state.get_data()
+    cover = message.photo[-1].file_id
+    album = (message.caption or "").strip()
+    await state.update_data(cover=cover)
+    text = "🖼 <b>ကာဗာပုံ ရရှိပြီ!</b>"
+    if album:
+        await state.update_data(album_name=album)
+        text += f"\n📀 Album နာမည်: <b>{html.escape(album)}</b>"
+    text += "\n\nအခု သီချင်းများ ပို့ပါ 👇"
+    await message.answer(text, parse_mode="HTML", reply_markup=upload_batch_kb())
+
+
+@router.message(AdminStates.upload_music, F.audio | F.document)
+async def upload_song(message: Message, state: FSMContext):
+    if message.document and "audio" not in (message.document.mime_type or ""):
+        await message.answer("⚠️ <b>အသံဖိုင် သာ ပို့နိုင်ပါသည်။</b>", parse_mode="HTML")
+        return
+    data = await state.get_data()
+    title, artist, album, file_id, file_size, duration = await _parse_song_meta(
+        message, data.get("album_name", "") or ""
+    )
+    pending = data.get("pending_songs") or []
+    pending.append(
+        {
+            "title": title,
+            "artist": artist,
+            "album": album or "",
+            "file_id": file_id,
+            "file_size": file_size,
+            "duration": duration,
+        }
+    )
+    await state.update_data(pending_songs=pending, album_name=album or data.get("album_name", ""))
+    line = f"📥 <b>သီချင်း ({len(pending)})</b> ✅\n\n🎵 <b>{html.escape(title)}</b>"
+    if artist:
+        line += f"\n🎤 {html.escape(artist)}"
+    if not artist:
+        line += "\n⚠️ အဆိုတော် နာမည် မပါပါ — caption 'Song | Artist' ဖြင့် ပို့နိုင်သည်"
+    line += (
+        f"\n📀 {html.escape(album) or '—'}\n\n"
+        "ထပ်ပို့ပါ — ပြီးရင် \"✅ ပြီးပါပြီ\" နှိပ်ပါ 👇"
+    )
+    await message.answer(line, parse_mode="HTML", reply_markup=upload_batch_kb())
+
+
+@router.message(AdminStates.upload_music, F.text)
+async def upload_set_album_name(message: Message, state: FSMContext):
+    if message.text.startswith("/"):
+        return
+    album = message.text.strip()
+    await state.update_data(album_name=album)
+    await message.answer(
+        f"📀 <b>{html.escape(album)}</b>\n\n"
+        "အခု သီချင်းများ ပို့ပါ 👇",
+        parse_mode="HTML",
+        reply_markup=upload_batch_kb(),
+    )
+
+
+@router.message(AdminStates.upload_music)
+async def upload_wrong_type(message: Message):
+    await message.answer(
+        "⚠️ အသံဖိုင်ကို forward/ပို့ပါ၊ သို့မဟုတ် photo ပို့ပါ — ပြီးရင် \"✅ ပြီးပါပြီ\" နှိပ်ပါ။",
+        parse_mode="HTML",
+    )
+
+
+async def _announce_upload(bot, summary: str):
+    if not CHANNEL_ID:
+        return
+    try:
+        await bot.send_message(CHANNEL_ID, summary, parse_mode="HTML")
+    except Exception as e:
+        logging.warning(f"Upload announce failed: {e}")
+
+
+@router.callback_query(F.data == "finish_upload")
+async def finish_upload(callback: CallbackQuery, state: FSMContext):
+    if not await is_admin(callback.from_user.id):
+        await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
+        return
+    data = await state.get_data()
+    pending = data.get("pending_songs") or []
+    cat_id = data.get("cat_id")
+    cover = data.get("cover", "") or ""
+    batch_album_name = data.get("album_name", "") or ""
+
+    if not pending:
+        await callback.answer("⚠️ သီချင်း မပို့ရသေးပါ!", show_alert=True)
+        return
+
+    artists_used = {}
+    albums_used = {}
+    artists_order = []
+    albums_order = []
+    count = 0
+
+    for s in pending:
+        artist_name = (s.get("artist") or "").strip() or "အမည်မသိ"
+        album_name = (s.get("album") or "").strip() or batch_album_name
+        if not album_name:
+            album_name = (artist_name + " အယ်လ်ဘမ်").strip()
+
+        artist = await db.get_or_create_artist(artist_name)
+        album = await db.get_or_create_album(
+            album_name,
+            artist=artist_name,
+            category_id=cat_id,
+            cover=cover,
+            artist_id=artist["_id"],
+        )
+        if album_name not in artists_used:
+            artists_used[album_name] = artist_name
+            artists_order.append(artist_name)
+        if album_name not in albums_used:
+            albums_used[album_name] = album["_id"]
+            albums_order.append(album_name)
+
+        await db.add_song(
+            s["title"],
+            album["_id"],
+            s["file_id"],
+            s["file_size"],
+            s["duration"],
+            artist_id=artist["_id"],
+        )
+        count += 1
+
+    await state.clear()
+
+    text = f"✅ <b>ထည့်ပြီးပါပြီ!</b>\n\n"
+    text += f"🎵 သီချင်း: <b>{count}</b> ပုဒ်\n"
+    text += f"🎤 အနုပညာရှင်: <b>{len(set(artists_order))}</b>\n"
+    text += f"📀 Album: <b>{len(albums_order)}</b>\n\n"
+    text += "<b>သိမ်းထားသော Album များ:</b>\n"
+    for i, a in enumerate(albums_order, 1):
+        text += f"{i}. {html.escape(a)} — {html.escape(artists_used[a])}\n"
+
+    await callback.message.answer(text, parse_mode="HTML")
+    await callback.answer()
+
+    artists_list = "၊ ".join(sorted(set(artists_order)))
+    sum_text = (
+        f"🆕 <b>သီချင်းအသစ် ရောက်ရှိသည်</b>\n\n"
+        f"🎵 {count} ပုဒ် — 🎤 {artists_list or 'အမည်မသိ'}\n"
+        f"🎧 Bot ၌ နားထောင်နိုင်ပါပြီ"
+    )
+    await _announce_upload(callback.bot, sum_text)
+
+
+@router.callback_query(F.data == "cancel_upload")
+async def cancel_upload(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.answer(
+        "❌ <b>တင်ခြင်း ရပ်လိုက်ပါပြီ</b>",
+        parse_mode="HTML",
+        reply_markup=admin_main_kb(),
+    )
+    await callback.answer()
+
+
+# ---------------- Generic admin forward auto-save (no active FSM) ----------------
+
+@router.message(StateFilter(None), F.audio | F.document)
+async def auto_save_forwarded(message: Message):
+    if not await is_admin(message.from_user.id):
+        return
+    if message.chat.type != "private":
+        return
+    if message.document and "audio" not in (message.document.mime_type or ""):
+        return
+    try:
+        title, artist, album, file_id, file_size, duration = await _parse_song_meta(
+            message, ""
+        )
+        existing = await db.db.songs.find_one({"file_id": file_id})
+        if existing:
+            await message.answer("ℹ️ ဤသီချင်းကို သိမ်းပြီးသား ဖြစ်ပါသည်။")
+            return
+
+        artist_doc = await db.get_or_create_artist(artist or "အမည်မသိ")
+        album_name = album or f"{artist_doc['name']} — အယ်လ်ဘမ်"
+        # Find an existing album for this artist, else create one via default category
+        album_doc = await db.get_or_create_album(
+            album_name,
+            artist=artist_doc["name"],
+            category_id=None,
+            artist_id=artist_doc["_id"],
+        )
+        await db.add_song(
+            title,
+            album_doc["_id"],
+            file_id,
+            file_size,
+            duration,
+            artist_id=artist_doc["_id"],
+        )
+        await message.answer(
+            f"✅ <b>သိမ်းပြီးပါပြီ!</b>\n\n"
+            f"🎵 <b>{html.escape(title)}</b>\n"
+            f"🎤 {html.escape(artist_doc['name'])}\n"
+            f"📀 {html.escape(album_doc['name'])}",
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logging.warning(f"Auto-save failed: {e}")
 
 
 # ---------------- FSM states ----------------

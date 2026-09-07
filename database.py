@@ -23,6 +23,8 @@ class Database:
         await self.db.albums.create_index("name")
         await self.db.songs.create_index("album_id")
         await self.db.songs.create_index("title")
+        await self.db.songs.create_index("artist_id")
+        await self.db.artists.create_index("name")
 
     async def close(self):
         if self.client:
@@ -55,6 +57,35 @@ class Database:
     async def delete_category(self, cat_id):
         await self.db.categories.delete_one({"_id": cat_id})
 
+    # ---------------- Artists ----------------
+    async def get_or_create_artist(self, name):
+        name = (name or "").strip()
+        if not name:
+            name = "အမည်မသိ"
+        artist = await self.db.artists.find_one({"name": name})
+        if artist:
+            return artist
+        res = await self.db.artists.insert_one(
+            {"name": name, "created_at": __import__("datetime").datetime.utcnow()}
+        )
+        return await self.db.artists.find_one({"_id": res.inserted_id})
+
+    async def get_all_artists(self, limit=100):
+        return await self.db.artists.find().sort("name", 1).to_list(length=limit)
+
+    async def get_artist(self, artist_id):
+        return await self.db.artists.find_one({"_id": artist_id})
+
+    async def search_artists(self, query, limit=10):
+        regex = {"$regex": query, "$options": "i"}
+        return await self.db.artists.find({"name": regex}).to_list(length=limit)
+
+    async def get_artist_albums(self, artist_id, limit=100):
+        return await self.db.albums.find({"artist_id": artist_id}).to_list(length=limit)
+
+    async def count_artist_songs(self, artist_id):
+        return await self.db.songs.count_documents({"artist_id": artist_id})
+
     # ---------------- Albums ----------------
     async def get_albums(self, cat_id=None):
         query = {"category_id": cat_id} if cat_id else {}
@@ -63,17 +94,34 @@ class Database:
     async def get_album(self, album_id):
         return await self.db.albums.find_one({"_id": album_id})
 
-    async def add_album(self, name, artist="", category_id=None, cover=""):
+    async def add_album(self, name, artist="", category_id=None, cover="", artist_id=None):
         return await self.db.albums.insert_one(
             {
                 "name": name,
                 "artist": artist,
+                "artist_id": artist_id,
                 "category_id": category_id,
                 "cover": cover,
                 "downloads": 0,
                 "created_at": __import__("datetime").datetime.utcnow(),
             }
         )
+
+    async def get_or_create_album(self, name, artist="", category_id=None, cover="", artist_id=None):
+        if artist_id:
+            album = await self.db.albums.find_one({"name": name, "artist_id": artist_id})
+            if album:
+                return album
+        album = await self.db.albums.find_one({"name": name})
+        if album:
+            if artist_id and (not album.get("artist_id") or not album.get("artist")):
+                await self.db.albums.update_one(
+                    {"_id": album["_id"]},
+                    {"$set": {"artist_id": artist_id, "artist": artist or album.get("artist", "")}},
+                )
+            return album
+        res = await self.add_album(name, artist, category_id, cover, artist_id)
+        return await self.db.albums.find_one({"_id": res.inserted_id})
 
     async def update_album(self, album_id, **kwargs):
         await self.db.albums.update_one({"_id": album_id}, {"$set": kwargs})
@@ -92,11 +140,12 @@ class Database:
     async def get_song(self, song_id):
         return await self.db.songs.find_one({"_id": song_id})
 
-    async def add_song(self, title, album_id, file_id, file_size=0, duration=0):
+    async def add_song(self, title, album_id, file_id, file_size=0, duration=0, artist_id=None):
         return await self.db.songs.insert_one(
             {
                 "title": title,
                 "album_id": album_id,
+                "artist_id": artist_id,
                 "file_id": file_id,
                 "file_size": file_size,
                 "duration": duration,

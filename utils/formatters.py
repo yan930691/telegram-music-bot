@@ -30,6 +30,13 @@ def clean_filename(name):
     return name.strip("_")
 
 
+def split_caption(caption):
+    """Split a caption like 'Album | Song | Artist' or 'Album | Song'."""
+    if not caption:
+        return []
+    return [p.strip() for p in caption.split("|")]
+
+
 def escape_markdown(text):
     """Escape Telegram MarkdownV2 special characters."""
     special = "_*[]()~`>#+-=|{}.!"
@@ -49,15 +56,17 @@ def get_help_text():
     return (
         "🆘 <b>အကူအညီ</b>\n\n"
         "🎵 <b>Bot အသုံးပြုနည်း:</b>\n"
-        "• မီနူးမှတစ်ဆင့် အမျိုးအစားနှင့် အယ်လ်ဘမ်များ ရွေးချယ်နိုင်သည်\n"
+        "• 📀 သီချင်းအမျိုးအစားများ — အမျိုးအစားအလိုက် Album ရွေးနိုင်သည်\n"
+        "• 🎤 အနုပညာရှင်များ — အဆိုတော်ရွေးပါက ၎င်း၏ Album အားလုံး ပြပါသည်\n"
         "• သီချင်းကို နှိပ်လိုက်ရင် bot က chat ထဲ ပို့ပေးပါသည်\n"
-        "• 🔍 ရှာဖွေ ခလုတ်ဖြင့် သီချင်းအမည်ရိုက်ပြီး ရှာဖွေနိုင်သည်\n\n"
+        "• 🔍 ရှာဖွေ ခလုတ်ဖြင့် အဆိုတော် / သီချင်းအမည် ရိုက်ပြီး ရှာဖွေနိုင်သည်\n\n"
         "<b>လုပ်ဆောင်ချက် (Command) များ:</b>\n"
         "/start - စတင်ခြင်း\n"
         "/help - အကူအညီ\n"
         "/menu - အဓိက မီနူး\n"
-        "/search &lt;အမည်&gt; - သီချင်းရှာဖွေရန်\n"
-        "/admin - (အက်ဒမင် အတွက်) စီမံခန့်ခွဲရန်"
+        "/search &lt;အမည်&gt; - အဆိုတော် / သီချင်း ရှာဖွေရန်\n"
+        "/admin - (အက်ဒမင် အတွက်) စီမံခန့်ခွဲရန်\n"
+        "/upload - (အက်ဒမင် အတွက်) Album + သီချင်း သွင်းရန်"
     )
 
 

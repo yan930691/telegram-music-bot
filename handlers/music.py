@@ -254,8 +254,8 @@ async def search_prompt(callback: CallbackQuery):
     from handlers.search import SEARCHING_USERS
     SEARCHING_USERS.add(callback.from_user.id)
     await callback.message.answer(
-        "🔍 <b>ရှာဖွေရန် သီချင်းအမည် ရိုက်ထည့်ပါ:</b>\n\n"
-        "ဥပမာ: <code>ချစ်</code>",
+        "🔍 <b>ရှာဖွေရန် အဆိုတော် သို့မဟုတ် သီချင်းအမည် ရိုက်ထည့်ပါ:</b>\n\n"
+        "ဥပမာ: <code>ချစ်</code> သို့မဟုတ် <code>အိုင်</code>",
         parse_mode="HTML",
     )
     await _safe_answer(callback, "🔍 ရှာဖွေရမည့် အမည် ရိုက်ပါ")
