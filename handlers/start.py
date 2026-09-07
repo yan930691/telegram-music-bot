@@ -225,3 +225,18 @@ async def show_popular(callback: CallbackQuery):
         reply_markup=popular_songs_kb(songs),
     )
     await callback.answer()
+
+
+@router.callback_query(F.data == "songs_new")
+async def show_new_songs(callback: CallbackQuery):
+    from keyboards.inline import search_results_kb
+    songs = await db.get_latest_songs(10)
+    if not songs:
+        await callback.answer("🆕 ထည့်သွင်းထားသော သီချင်း မရှိသေးပါ!")
+        return
+    await callback.message.edit_text(
+        "🆕 <b>အသစ်ထည့်ထားသော သီချင်းများ (နောက်ဆုံး 10):</b>",
+        parse_mode="HTML",
+        reply_markup=search_results_kb(songs),
+    )
+    await callback.answer()

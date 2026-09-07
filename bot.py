@@ -12,7 +12,7 @@ from config import BOT_TOKEN, ADMIN_IDS, MONGODB_URI, BUILD_VERSION
 from database import db
 
 # Import routers
-from handlers import start, music, search, admin, channel
+from handlers import start, music, search, admin, channel, webfind
 
 # Import message/song state handlers
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -77,6 +77,7 @@ async def main():
     dp.include_router(start.router)
     dp.include_router(music.router)
     dp.include_router(search.router)
+    dp.include_router(webfind.router)
     dp.include_router(admin.router)
     dp.include_router(channel.router)
 

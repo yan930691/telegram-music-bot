@@ -11,10 +11,16 @@ ADMIN_IDS = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "").split(",") if x.
 # Channel ID for new release notifications (e.g. "@your_channel" or "-1001234567890")
 CHANNEL_ID = os.getenv("CHANNEL_ID", "")
 
+# Optional: enables Shazam-style song recognition (voice / video note)
+AUDD_API_TOKEN = os.getenv("AUDD_API_TOKEN", "")
+
+# Optional: restrict web search/external download to only these user IDs (empty = everyone)
+ALLOWED_USERS = [int(x.strip()) for x in os.getenv("ALLOWED_USERS", "").split(",") if x.strip()]
+
 MUSIC_DIR = os.path.join(os.path.dirname(__file__), "data", "music")
 os.makedirs(MUSIC_DIR, exist_ok=True)
 
 CHUNK_SIZE = 1024 * 512  # 512KB chunks for downloading
 
 # Build marker so you can verify which version is running on Render
-BUILD_VERSION = os.getenv("BUILD_VERSION", "v0.6.0")
+BUILD_VERSION = os.getenv("BUILD_VERSION", "v0.7.0")

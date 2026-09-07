@@ -7,10 +7,12 @@ def main_menu_kb(is_admin=False) -> InlineKeyboardMarkup:
     builder.button(text="📀 အမျိုးအစားများ", callback_data="cats")
     builder.button(text="🎵 သီချင်းများ", callback_data="songs_all")
     builder.button(text="🔥 လူကြိုက်များ", callback_data="popular")
+    builder.button(text="🆕 အသစ်များ", callback_data="songs_new")
     builder.button(text="🔍 ရှာဖွေရန်", callback_data="search")
+    builder.button(text="🌐 Web သီချင်းရှာ", callback_data="web_search")
     if is_admin:
         builder.button(text="⚙️ အက်ဒမင် မီနူး", callback_data="admin_menu")
-    builder.adjust(2, 2, 1)
+    builder.adjust(2, 2, 2, 1)
     return builder.as_markup()
 
 

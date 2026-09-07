@@ -108,6 +108,14 @@ class Database:
     async def update_song(self, song_id, **kwargs):
         await self.db.songs.update_one({"_id": song_id}, {"$set": kwargs})
 
+    async def get_latest_songs(self, limit=10):
+        return (
+            await self.db.songs.find()
+            .sort("created_at", -1)
+            .limit(limit)
+            .to_list(length=limit)
+        )
+
     async def delete_song(self, song_id):
         await self.db.songs.delete_one({"_id": song_id})
 
