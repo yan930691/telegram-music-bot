@@ -8,7 +8,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiohttp import web
 
-from config import BOT_TOKEN, ADMIN_IDS, MONGODB_URI
+from config import BOT_TOKEN, ADMIN_IDS, MONGODB_URI, BUILD_VERSION
 from database import db
 
 # Import routers
@@ -59,6 +59,7 @@ def validate_config():
 
 async def main():
     validate_config()
+    logging.info("Build version: %s", BUILD_VERSION)
     logging.info("Config OK: BOT_TOKEN=%s MONGODB_URI=%s ADMIN_IDS=%s",
                  "***" if BOT_TOKEN else None, MONGODB_URI, ADMIN_IDS)
 

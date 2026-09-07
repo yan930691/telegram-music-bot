@@ -13,7 +13,7 @@ from keyboards.inline import (
 )
 from database import db
 from bson import ObjectId
-from config import ADMIN_IDS
+from config import ADMIN_IDS, BUILD_VERSION
 
 router = Router()
 
@@ -30,6 +30,22 @@ async def start_handler(message: Message):
         parse_mode="HTML",
         reply_markup=main_menu_kb(message.from_user.id in ADMIN_IDS),
     )
+
+
+@router.message(Command("version"))
+async def version_handler(message: Message):
+    if message.from_user.id in ADMIN_IDS:
+        stats = await db.get_stats()
+        await message.answer(
+            f"⚙️ <b>Bot Build</b>\n\n"
+            f"🆕 Version: <code>{BUILD_VERSION}</code>\n"
+            f"🎵 သီချင်း: {stats['songs']}\n"
+            f"📀 အယ်လ်ဘမ်: {stats['albums']}\n"
+            f"👥 အသုံးပြုသူ: {stats['users']}",
+            parse_mode="HTML",
+        )
+    else:
+        await message.answer("❌ သင်သည် အက်ဒမင် မဟုတ်ပါ။")
 
 
 @router.message(Command("help"))
@@ -140,24 +156,26 @@ async def show_album(callback: CallbackQuery):
     text = f"📀 <b>{album['name']}</b>\n"
     if album.get("artist"):
         text += f"🎤 {album['artist']}\n"
-    text += f"📥 ဒေါင်းလုဒ်: {album.get('downloads', 0)}"
+    text += f"📥 ဒေါင်းလုဒ်: {album.get('downloads', 0)}\n\n"
+    text += "လုပ်ဆောင်ချက် ရွေးချယ်ပါ:"
+
+    # Show cover as a separate photo (NOT as the button message).
+    # The buttons stay on a text message so every button works.
     if album.get("cover"):
         try:
-            await callback.message.delete()
+            await callback.message.answer_photo(
+                photo=album["cover"],
+                caption=f"📀 <b>{album['name']}</b>",
+                parse_mode="HTML",
+            )
         except Exception:
             pass
-        await callback.message.answer_photo(
-            photo=album["cover"],
-            caption=text,
-            parse_mode="HTML",
-            reply_markup=album_actions_kb(album_id, is_admin),
-        )
-    else:
-        await callback.message.edit_text(
-            text + "\n\nလုပ်ဆောင်ချက် ရွေးချယ်ပါ:",
-            parse_mode="HTML",
-            reply_markup=album_actions_kb(album_id, is_admin),
-        )
+
+    await callback.message.edit_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=album_actions_kb(album_id, is_admin),
+    )
     await callback.answer()
 
 

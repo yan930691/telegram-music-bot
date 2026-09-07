@@ -1,10 +1,11 @@
 import html
+import logging
 
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, Message
 from database import db
 from bson import ObjectId
-from keyboards.inline import search_results_kb, album_songs_to_send, player_kb, songs_kb
+from keyboards.inline import album_songs_to_send, player_kb, songs_kb
 
 router = Router()
 
@@ -69,6 +70,7 @@ async def _play(callback: CallbackQuery, user_id, remove=True):
         reply_markup=player_kb(str(album_id), idx + 1, len(songs), paused=False),
     )
     await callback.answer("▶️ ပို့ပေးပါပြီ!")
+    logging.info("Player track %s for user %s: %s/%s", song_id, user_id, idx + 1, len(songs))
 
 
 # ---------------- Start player ----------------
