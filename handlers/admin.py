@@ -14,6 +14,10 @@ from bson import ObjectId
 from keyboards.inline import (
     admin_main_kb,
     admin_delete_menu_kb,
+    admin_delete_choice_kb,
+    admin_album_delete_kb,
+    admin_song_delete_kb,
+    admin_confirm_delete_kb,
     album_add_cat_kb,
     album_added_kb,
     song_added_kb,
@@ -162,6 +166,19 @@ async def admin_delete_menu(callback: CallbackQuery):
     if not await is_admin(callback.from_user.id):
         await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
         return
+    await callback.message.edit_text(
+        "🗑 <b>ဖျက်လိုသည့် အမျိုးအစား ရွေးပါ:</b>",
+        parse_mode="HTML",
+        reply_markup=admin_delete_choice_kb(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "del_pick_cat")
+async def delete_cat_pick(callback: CallbackQuery):
+    if not await is_admin(callback.from_user.id):
+        await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
+        return
     cats = await db.get_categories()
     if not cats:
         await callback.answer("⚠️ ဖျက်ရန် အမျိုးအစား မရှိပါ!")
@@ -172,6 +189,125 @@ async def admin_delete_menu(callback: CallbackQuery):
         reply_markup=admin_delete_menu_kb(cats),
     )
     await callback.answer()
+
+
+@router.callback_query(F.data == "del_pick_album")
+async def delete_album_pick(callback: CallbackQuery):
+    if not await is_admin(callback.from_user.id):
+        await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
+        return
+    albums = await db.get_all_albums()
+    if not albums:
+        await callback.answer("⚠️ ဖျက်ရန် Album မရှိပါ!")
+        return
+    await callback.message.edit_text(
+        "🗑 <b>ဖျက်မည့် Album ရွေးပါ:</b>\n\n"
+        f"(Album ဖျက်လျှင် ထဲမှ သီချင်းများလည်း ပါ ဖျက်ပါမည်)",
+        parse_mode="HTML",
+        reply_markup=admin_album_delete_kb(albums),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "del_pick_song")
+async def delete_song_pick(callback: CallbackQuery):
+    if not await is_admin(callback.from_user.id):
+        await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
+        return
+    songs = await db.get_all_songs()
+    if not songs:
+        await callback.answer("⚠️ ဖျက်ရန် သီချင်း မရှိပါ!")
+        return
+    await callback.message.edit_text(
+        "🗑 <b>ဖျက်မည့် သီချင်း ရွေးပါ:</b>",
+        parse_mode="HTML",
+        reply_markup=admin_song_delete_kb(songs),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("del_album:"))
+async def delete_album_confirm(callback: CallbackQuery):
+    if not await is_admin(callback.from_user.id):
+        await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
+        return
+    album_id = ObjectId(callback.data.split(":")[1])
+    album = await db.get_album(album_id)
+    count = await db.db.songs.count_documents({"album_id": album_id})
+    album_name = album["name"] if album else ""
+    await callback.message.edit_text(
+        f"⚠️ <b>{html.escape(album_name)}</b> ကို ဖျက်မည်လား?\n\n"
+        f"ထဲမှ သီချင်း <b>{count}</b> ပုဒ်လည်း ပါ ဖျက်ပါမည်။",
+        parse_mode="HTML",
+        reply_markup=admin_confirm_delete_kb(f"del_album:{album_id}", "del_pick_album"),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("confirm_del_album:"))
+async def confirm_delete_album(callback: CallbackQuery):
+    if not await is_admin(callback.from_user.id):
+        await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
+        return
+    album_id = ObjectId(callback.data.split(":")[1])
+    album = await db.get_album(album_id)
+    artist_id = album.get("artist_id") if album else None
+    await db.delete_album(album_id)
+    if artist_id:
+        await db.delete_artist_if_empty(artist_id)
+    await callback.answer("🗑 Album ဖျက်ပြီးပါပြီ!")
+    albums = await db.get_all_albums()
+    if albums:
+        await callback.message.edit_text(
+            "🗑 <b>ဖျက်မည့် Album ရွေးပါ:</b>",
+            parse_mode="HTML",
+            reply_markup=admin_album_delete_kb(albums),
+        )
+    else:
+        await callback.message.edit_text(
+            "✅ <b>ဖျက်ပြီးပါပြီ!</b>\n\nAlbum မကျန်တော့ပါ။",
+            parse_mode="HTML",
+            reply_markup=admin_main_kb(),
+        )
+
+
+@router.callback_query(F.data.startswith("del_song:"))
+async def delete_song_confirm(callback: CallbackQuery):
+    if not await is_admin(callback.from_user.id):
+        await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
+        return
+    song_id = ObjectId(callback.data.split(":")[1])
+    song = await db.get_song(song_id)
+    song_title = song["title"] if song else ""
+    await callback.message.edit_text(
+        f"⚠️ <b>{html.escape(song_title)}</b> ကို ဖျက်မည်လား?",
+        parse_mode="HTML",
+        reply_markup=admin_confirm_delete_kb(f"del_song:{song_id}", "del_pick_song"),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("confirm_del_song:"))
+async def confirm_delete_song(callback: CallbackQuery):
+    if not await is_admin(callback.from_user.id):
+        await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
+        return
+    song_id = ObjectId(callback.data.split(":")[1])
+    await db.delete_song(song_id)
+    await callback.answer("🗑 သီချင်း ဖျက်ပြီးပါပြီ!")
+    songs = await db.get_all_songs()
+    if songs:
+        await callback.message.edit_text(
+            "🗑 <b>ဖျက်မည့် သီချင်း ရွေးပါ:</b>",
+            parse_mode="HTML",
+            reply_markup=admin_song_delete_kb(songs),
+        )
+    else:
+        await callback.message.edit_text(
+            "✅ <b>ဖျက်ပြီးပါပြီ!</b>\n\nသီချင်း မကျန်တော့ပါ။",
+            parse_mode="HTML",
+            reply_markup=admin_main_kb(),
+        )
 
 
 @router.callback_query(F.data.startswith("del_cat:"))

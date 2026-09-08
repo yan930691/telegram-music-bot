@@ -91,6 +91,9 @@ class Database:
         query = {"category_id": cat_id} if cat_id else {}
         return await self.db.albums.find(query).to_list(length=100)
 
+    async def get_all_albums(self, limit=200):
+        return await self.db.albums.find().sort("name", 1).to_list(length=limit)
+
     async def get_album(self, album_id):
         return await self.db.albums.find_one({"_id": album_id})
 
@@ -130,12 +133,21 @@ class Database:
         await self.db.albums.delete_one({"_id": album_id})
         await self.db.songs.delete_many({"album_id": album_id})
 
+    async def delete_artist_if_empty(self, artist_id):
+        remaining_albums = await self.db.albums.count_documents({"artist_id": artist_id})
+        remaining_songs = await self.db.songs.count_documents({"artist_id": artist_id})
+        if remaining_albums == 0 and remaining_songs == 0:
+            await self.db.artists.delete_one({"_id": artist_id})
+
     async def increment_album_downloads(self, album_id):
         await self.db.albums.update_one({"_id": album_id}, {"$inc": {"downloads": 1}})
 
     # ---------------- Songs ----------------
     async def get_songs(self, album_id):
         return await self.db.songs.find({"album_id": album_id}).to_list(length=100)
+
+    async def get_all_songs(self, limit=200):
+        return await self.db.songs.find().sort("title", 1).to_list(length=limit)
 
     async def get_song(self, song_id):
         return await self.db.songs.find_one({"_id": song_id})
@@ -166,7 +178,10 @@ class Database:
         )
 
     async def delete_song(self, song_id):
+        song = await self.db.songs.find_one({"_id": song_id})
         await self.db.songs.delete_one({"_id": song_id})
+        if song and song.get("artist_id"):
+            await self.delete_artist_if_empty(song["artist_id"])
 
     async def increment_song_downloads(self, song_id):
         await self.db.songs.update_one({"_id": song_id}, {"$inc": {"downloads": 1}})

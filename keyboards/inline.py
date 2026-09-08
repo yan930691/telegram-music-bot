@@ -167,6 +167,51 @@ def admin_delete_menu_kb(cats) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def admin_delete_choice_kb() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🗑 သီချင်းဖျက်", callback_data="del_pick_song")
+    builder.button(text="🗑 Album ဖျက်", callback_data="del_pick_album")
+    builder.button(text="🗑 အမျိုးအစားဖျက်", callback_data="del_pick_cat")
+    builder.button(text="🔙 နောက်သို့", callback_data="admin_menu")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def admin_album_delete_kb(albums) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for i, album in enumerate(albums, start=1):
+        text = f"📀 {i}. {album['name']}"
+        if album.get("artist"):
+            text += f" — {album['artist']}"
+        builder.button(
+            text=text,
+            callback_data=f"del_album:{album['_id']}",
+        )
+    builder.button(text="🔙 နောက်သို့", callback_data="admin_delete_menu")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def admin_song_delete_kb(songs) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for i, song in enumerate(songs, start=1):
+        builder.button(
+            text=f"🎵 {i}. {song['title']}",
+            callback_data=f"del_song:{song['_id']}",
+        )
+    builder.button(text="🔙 နောက်သို့", callback_data="admin_delete_menu")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def admin_confirm_delete_kb(data, back_data) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ ဖျက်မည်", callback_data=f"confirm_{data}")
+    builder.button(text="❌ မဖျက်တော့", callback_data=back_data)
+    builder.adjust(2)
+    return builder.as_markup()
+
+
 def album_add_cat_kb(cats) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for cat in cats:
