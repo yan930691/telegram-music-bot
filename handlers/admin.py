@@ -29,6 +29,7 @@ from keyboards.inline import (
     upload_batch_kb,
 )
 from utils.formatters import split_caption
+from utils.converter import normalize_myanmar
 
 router = Router()
 admin_router = router  # all callbacks gated by is_admin check
@@ -423,6 +424,9 @@ async def _parse_song_meta(message: Message, current_album: str):
         title = "အမည်မသိ"
     if title.lower().endswith((".mp3", ".m4a", ".ogg", ".wav", ".opus")):
         title = title.rsplit(".", 1)[0]
+    title = normalize_myanmar(title)
+    artist = normalize_myanmar(artist)
+    default_album = normalize_myanmar(default_album)
     return title, artist.strip(), default_album, file_id, file_size, duration
 
 
@@ -477,7 +481,7 @@ async def upload_song(message: Message, state: FSMContext):
 async def upload_set_album_name(message: Message, state: FSMContext):
     if message.text.startswith("/"):
         return
-    album = message.text.strip()
+    album = normalize_myanmar(message.text.strip())
     await state.update_data(album_name=album)
     await message.answer(
         f"📀 <b>{html.escape(album)}</b>\n\n"

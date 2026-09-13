@@ -4,6 +4,7 @@ from aiogram.filters import Command
 from database import db
 from config import ADMIN_IDS
 from keyboards.inline import search_results_kb, main_menu_kb
+from utils.converter import normalize_myanmar
 
 router = Router()
 
@@ -41,6 +42,8 @@ async def perform_search(message: Message, query: str):
     if not query:
         await message.answer("❌ ရှာဖွေရန် အမည် ထည့်ပါ။")
         return
+
+    query = normalize_myanmar(query)
 
     artists = await db.search_artists(query)
     if artists:

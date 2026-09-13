@@ -6,6 +6,7 @@ from aiogram.types import Message
 from database import db
 from config import CHANNEL_ID
 from utils.formatters import split_caption
+from utils.converter import normalize_myanmar
 
 router = Router()
 
@@ -49,6 +50,8 @@ async def on_channel_audio(message: Message):
 
         caption = message.caption or ""
         parts = split_caption(caption)
+        for i in range(len(parts)):
+            parts[i] = normalize_myanmar(parts[i])
 
         # Caption formats: "AlbumName | SongTitle" or "AlbumName | SongTitle | Artist"
         album_name = None
@@ -70,6 +73,9 @@ async def on_channel_audio(message: Message):
             title = "အမည်မသိ"
         if not album_name:
             album_name = DEFAULT_ALBUM
+        title = normalize_myanmar(title)
+        artist_name = normalize_myanmar(artist_name)
+        album_name = normalize_myanmar(album_name)
 
         # Skip duplicates (same file_id already saved)
         existing = await db.db.songs.find_one({"file_id": file_id})
