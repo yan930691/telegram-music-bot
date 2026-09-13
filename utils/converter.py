@@ -11,9 +11,27 @@ from utils.rabbit import Rabbit
 # (Zawgyi maps normal Unicode letters onto these block codepoints).
 _ZAWGYI_ONLY_RX = re.compile(r"[\u1060-\u109F]")
 
-# Zawgyi places the pre-base vowel U+1031 before the consonant cluster
-# in the order it is typed; Unicode keeps it after the base consonant.
-_ZAWGYI_PRE_VOWEL_RX = re.compile(r"[\u1031][\u1000-\u1021]")
+# Zawgyi ya-pin (ျ) is stored as U+103A immediately before the base consonant
+# (e.g. "ျမန္မာ"), and is NOT preceded by a base consonant itself. In Unicode
+# the equivalent codepoint is the asat (်) and is always typed AFTER a vowel
+# or medial that follows a base consonant, so a genuine asat is preceded by a
+# consonant character.
+_ZAWGYI_YAPIN_RX = re.compile(r"(?<![\u1000-\u1021])[\u103A][\u1000-\u1021]")
+
+# Zawgyi asat (်) is stored as U+1039 (virama). In genuine Unicode a virama
+# is only used for stacking/kinzi and is ALWAYS followed by a base consonant,
+# so any U+1039 not followed by one is a Zawgyi signature.
+_ZAWGYI_ASAT_RX = re.compile(r"[\u1000-\u1021]\u1039(?![\u1000-\u1021])")
+
+# Zawgyi writes the pre-base vowel U+1031 at the START of the consonant
+# cluster in typed order (e.g. "ေ" + consonant). In Unicode the U+1031 is
+# stored AFTER the base consonant and any medials, so a U+1031 that begins a
+# cluster (not preceded by a base consonant or medial) is a Zawgyi signature.
+_ZAWGYI_PRE_VOWEL_RX = re.compile(r"(?<![\u1000-\u1021\u103B-\u103E])\u1031(?:[\u103B-\u103E]*)[\u1000-\u1021]")
+
+# Unicode signals.
+_UNICODE_ASAT_END_RX = re.compile(r"[\u1000-\u1021]\u103A(?![\u1000-\u1021])")
+_UNICODE_KINZI_RX = re.compile(r"\u1004\u103A\u1039")
 
 
 def is_zawgyi(text):
@@ -22,11 +40,19 @@ def is_zawgyi(text):
         return False
     if _ZAWGYI_ONLY_RX.search(text):
         return True
-    if re.search(r"[\u1000-\u1021]\u1039", text):
-        return False
+    zaw = 0
+    uni = 0
+    if _ZAWGYI_YAPIN_RX.search(text):
+        zaw += 2
+    if _ZAWGYI_ASAT_RX.search(text):
+        zaw += 2
     if _ZAWGYI_PRE_VOWEL_RX.search(text):
-        return True
-    return False
+        zaw += 2
+    if _UNICODE_ASAT_END_RX.search(text):
+        uni += 2
+    if _UNICODE_KINZI_RX.search(text):
+        uni += 2
+    return zaw > uni
 
 
 def zawgyi_to_unicode(text):
