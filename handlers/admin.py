@@ -30,6 +30,7 @@ from keyboards.inline import (
 )
 from utils.formatters import split_caption
 from utils.converter import normalize_myanmar
+from utils.metadata import read_audio_metadata
 
 router = Router()
 admin_router = router  # all callbacks gated by is_admin check
@@ -420,6 +421,17 @@ async def _parse_song_meta(message: Message, current_album: str):
     elif len(caption_parts) == 1:
         title = caption_parts[0] or title
 
+    # Fill gaps from the file's embedded metadata (album is never sent by
+    # Telegram, so MP3 ID3 tags are the only reliable source for it).
+    if not title or not artist or not default_album:
+        meta = await read_audio_metadata(message.bot, file_id, file_size)
+        if not title and meta.get("title"):
+            title = meta["title"]
+        if not artist and meta.get("artist"):
+            artist = meta["artist"]
+        if not default_album and meta.get("album"):
+            default_album = meta["album"]
+
     if not title:
         title = "အမည်မသိ"
     if title.lower().endswith((".mp3", ".m4a", ".ogg", ".wav", ".opus")):
@@ -784,7 +796,11 @@ async def add_batch_song(message: Message, state: FSMContext):
         duration = 0
         auto_title = message.document.file_name or ""
 
-    title = custom_title or auto_title or "အမည်မသိ"
+    title = custom_title or auto_title
+    if not title:
+        meta = await read_audio_metadata(message.bot, file_id, file_size)
+        title = meta.get("title") or ""
+    title = title or "အမည်မသိ"
     if not custom_title and title.lower().endswith((".mp3", ".m4a", ".ogg", ".wav")):
         title = title.rsplit(".", 1)[0]
 

@@ -17,4 +17,4 @@ os.makedirs(MUSIC_DIR, exist_ok=True)
 CHUNK_SIZE = 1024 * 512  # 512KB chunks for downloading
 
 # Build marker so you can verify which version is running on Render
-BUILD_VERSION = os.getenv("BUILD_VERSION", "v0.8.3")
+BUILD_VERSION = os.getenv("BUILD_VERSION", "v0.8.4")

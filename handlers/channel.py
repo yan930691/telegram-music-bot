@@ -7,6 +7,7 @@ from database import db
 from config import CHANNEL_ID
 from utils.formatters import split_caption
 from utils.converter import normalize_myanmar
+from utils.metadata import read_audio_metadata
 
 router = Router()
 
@@ -69,6 +70,20 @@ async def on_channel_audio(message: Message):
 
         if custom_title:
             title = custom_title
+
+        # Fill gaps from the file's embedded metadata (album is never sent by
+        # Telegram, so MP3 ID3 tags are the only reliable source for it).
+        if not title or not performer or not album_name:
+            meta = await read_audio_metadata(message.bot, file_id, file_size)
+            if not title and meta.get("title"):
+                title = meta["title"]
+            if not performer and meta.get("artist"):
+                performer = meta["artist"]
+            if not album_name and meta.get("album"):
+                album_name = meta["album"]
+            if artist_name in (None, "") and performer:
+                artist_name = performer
+
         if not title:
             title = "အမည်မသိ"
         if not album_name:
