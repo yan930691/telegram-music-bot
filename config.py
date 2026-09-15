@@ -3,18 +3,28 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-MONGODB_URI = os.getenv("MONGODB_URI")
-DB_NAME = os.getenv("DB_NAME", "music_bot")
-ADMIN_IDS = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
+def get_required_env(name: str) -> str:
+    value = os.getenv(name)
+    if not value:
+        raise RuntimeError(f"Missing required environment variable: {name}")
+    return value
 
-# Channel ID for new release notifications (e.g. "@your_channel" or "-1001234567890")
-CHANNEL_ID = os.getenv("CHANNEL_ID", "")
+BOT_TOKEN = get_required_env("BOT_TOKEN")
+MONGODB_URI = get_required_env("MONGODB_URI")
+MONGODB_DB_NAME = os.getenv("MONGODB_DB_NAME", "myanmar_music")
 
-MUSIC_DIR = os.path.join(os.path.dirname(__file__), "data", "music")
-os.makedirs(MUSIC_DIR, exist_ok=True)
+def get_admin_ids():
+    raw_ids = os.getenv("ADMIN_IDS", "")
+    if not raw_ids.strip():
+        return set()
+    admin_ids = set()
+    for item in raw_ids.split(","):
+        item = item.strip()
+        if item:
+            try:
+                admin_ids.add(int(item))
+            except ValueError:
+                raise RuntimeError(f"Invalid ADMIN_IDS value: {item}")
+    return admin_ids
 
-CHUNK_SIZE = 1024 * 512  # 512KB chunks for downloading
-
-# Build marker so you can verify which version is running on Render
-BUILD_VERSION = os.getenv("BUILD_VERSION", "v0.8.4")
+ADMIN_IDS = get_admin_ids()
