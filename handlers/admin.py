@@ -330,19 +330,51 @@ async def confirm_delete_song(callback: CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("del_cat:"))
-async def delete_category(callback: CallbackQuery):
+async def delete_category_confirm(callback: CallbackQuery):
     if not await is_admin(callback.from_user.id):
         await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
         return
     cat_id = ObjectId(callback.data.split(":")[1])
+    cat = await db.get_category(cat_id)
+    album_count = await db.db.albums.count_documents({"category_id": cat_id})
+    cat_name = cat["name"] if cat else ""
+    await callback.message.edit_text(
+        f"⚠️ <b>{html.escape(cat_name)}</b> အမျိုးအစား ကို ဖျက်မည်လား?\n\n"
+        f"ထဲမှ Album <b>{album_count}</b> ခုနှင့် ၎င်းတို့၏ သီချင်းများ အားလုံး "
+        "ပါ ဖျက်ပါမည်။",
+        parse_mode="HTML",
+        reply_markup=admin_confirm_delete_kb(f"del_cat:{cat_id}", "del_pick_cat"),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("confirm_del_cat:"))
+async def confirm_delete_category(callback: CallbackQuery):
+    if not await is_admin(callback.from_user.id):
+        await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
+        return
+    cat_id = ObjectId(callback.data.split(":")[1])
+    albums = await db.get_albums(cat_id)
+    for album in albums:
+        artist_id = album.get("artist_id")
+        await db.delete_album(album["_id"])
+        if artist_id:
+            await db.delete_artist_if_empty(artist_id)
     await db.delete_category(cat_id)
     await callback.answer("🗑 အမျိုးအစား ဖျက်ပြီးပါပြီ!")
     cats = await db.get_categories()
-    await callback.message.edit_text(
-        "🗑 <b>ဖျက်မည့် အမျိုးအစား ရွေးပါ:</b>",
-        parse_mode="HTML",
-        reply_markup=admin_delete_menu_kb(cats),
-    )
+    if cats:
+        await callback.message.edit_text(
+            "🗑 <b>ဖျက်မည့် အမျိုးအစား ရွေးပါ:</b>",
+            parse_mode="HTML",
+            reply_markup=admin_delete_menu_kb(cats),
+        )
+    else:
+        await callback.message.edit_text(
+            "✅ <b>ဖျက်ပြီးပါပြီ!</b>\n\nအမျိုးအစား မကျန်တော့ပါ။",
+            parse_mode="HTML",
+            reply_markup=admin_main_kb(),
+        )
 
 
 # ---------------- New: Upload album with auto artist grouping ----------------
@@ -619,6 +651,9 @@ async def finish_upload(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "cancel_upload")
 async def cancel_upload(callback: CallbackQuery, state: FSMContext):
+    if not await is_admin(callback.from_user.id):
+        await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
+        return
     await state.clear()
     await callback.message.answer(
         "❌ <b>တင်ခြင်း ရပ်လိုက်ပါပြီ</b>",
@@ -699,6 +734,18 @@ async def receive_cat_desc(message: Message, state: FSMContext):
     await db.add_category(data["cat_name"], desc)
     await state.clear()
     await message.answer("✅ <b>အမျိုးအစား ထည့်ပြီးပါပြီ!</b>", parse_mode="HTML", reply_markup=admin_main_kb())
+
+
+@router.callback_query(F.data.startswith("add_album:"))
+async def add_album_to_cat(callback: CallbackQuery, state: FSMContext):
+    if not await is_admin(callback.from_user.id):
+        await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
+        return
+    cat_id = ObjectId(callback.data.split(":")[1])
+    await state.update_data(album_cat_id=cat_id)
+    await state.set_state(AdminStates.waiting_album_name)
+    await callback.message.answer("📀 <b>အယ်လ်ဘမ် အမည် ရိုက်ထည့်ပါ:</b>", parse_mode="HTML")
+    await callback.answer()
 
 
 @router.callback_query(AdminStates.waiting_album_cat, F.data.startswith("albadd_cat:"))
@@ -893,6 +940,9 @@ async def _apply_finish_batch(reply_target, state: FSMContext, album_id=None) ->
 
 @router.callback_query(F.data.startswith("finish_songs:"))
 async def finish_batch(callback: CallbackQuery, state: FSMContext):
+    if not await is_admin(callback.from_user.id):
+        await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
+        return
     album_id = ObjectId(callback.data.split(":")[1])
     await _apply_finish_batch(callback.message, state, album_id=album_id)
     await callback.answer()
@@ -900,6 +950,9 @@ async def finish_batch(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "cancel_batch")
 async def cancel_batch(callback: CallbackQuery, state: FSMContext):
+    if not await is_admin(callback.from_user.id):
+        await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
+        return
     await state.clear()
     await callback.message.answer(
         "❌ <b>ထည့်ခြင်း ရပ်လိုက်ပါပြီ</b>\n\n"

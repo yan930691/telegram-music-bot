@@ -112,6 +112,16 @@ async def download_album(callback: CallbackQuery):
         await _safe_answer(callback, "⚠️ အမှားဖြစ်သွားသည်။")
 
 
+@router.callback_query(F.data == "cancel")
+async def close_menu(callback: CallbackQuery):
+    try:
+        await callback.message.delete()
+    except Exception:
+        await callback.answer()
+    else:
+        await callback.answer("❌ ပိတ်လိုက်ပါပြီ")
+
+
 @router.callback_query(F.data == "search")
 async def search_prompt(callback: CallbackQuery):
     from handlers.search import SEARCHING_USERS
