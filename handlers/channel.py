@@ -7,7 +7,7 @@ from database import db
 from config import CHANNEL_ID
 from utils.formatters import split_caption
 from utils.converter import normalize_myanmar
-from utils.metadata import read_audio_metadata
+from utils.metadata import read_audio_metadata, pick_song_title
 
 router = Router()
 
@@ -35,7 +35,7 @@ async def on_channel_audio(message: Message):
             file_id = message.audio.file_id
             file_size = message.audio.file_size or 0
             duration = message.audio.duration or 0
-            title = message.audio.title or ""
+            title = pick_song_title(message.audio.file_name or "", message.audio.title or "")
             performer = message.audio.performer or ""
         elif message.document:
             mime = (message.document.mime_type or "")

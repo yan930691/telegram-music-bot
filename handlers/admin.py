@@ -30,7 +30,7 @@ from keyboards.inline import (
 )
 from utils.formatters import split_caption
 from utils.converter import normalize_myanmar
-from utils.metadata import read_audio_metadata
+from utils.metadata import read_audio_metadata, pick_song_title
 
 router = Router()
 admin_router = router  # all callbacks gated by is_admin check
@@ -445,7 +445,7 @@ async def _parse_song_meta(message: Message, current_album: str):
     """Return (title, artist, album_from_caption) for an audio/document message."""
     caption_parts = split_caption(message.caption)
     if message.audio:
-        title = message.audio.title or ""
+        title = pick_song_title(message.audio.file_name or "", message.audio.title or "")
         artist = message.audio.performer or ""
         file_id = message.audio.file_id
         file_size = message.audio.file_size or 0
@@ -855,7 +855,7 @@ async def add_batch_song(message: Message, state: FSMContext):
         file_id = message.audio.file_id
         file_size = message.audio.file_size or 0
         duration = message.audio.duration or 0
-        auto_title = message.audio.title or ""
+        auto_title = pick_song_title(message.audio.file_name or "", message.audio.title or "")
     else:
         if "audio" not in (message.document.mime_type or ""):
             await message.answer("⚠️ <b>အသံဖိုင် သာ ပို့နိုင်ပါသည်။</b>", parse_mode="HTML")

@@ -6,6 +6,51 @@ from mutagen import File as MutagenFile
 
 MAX_READ_SIZE = 80 * 1024 * 1024  # skip files larger than 80 MB
 
+_AUDIO_EXTS = (".mp3", ".m4a", ".ogg", ".wav", ".opus", ".flac", ".aac", ".opus")
+
+
+def pick_song_title(file_name: str, id3_title: str = "") -> str:
+    """Prefer the real PC file name over junk embedded titles.
+
+    Many MP3s carry generic tags such as "Unknown track" / "VA - Unknown
+    track".  Admins who rename files before uploading expect the bot to use
+    their filename instead.  Falls back to the embedded title when there is
+    no usable filename.
+    """
+    name = (file_name or "").strip()
+    if name:
+        low = name.lower()
+        for ext in _AUDIO_EXTS:
+            if low.endswith(ext):
+                name = name[: -len(ext)].strip()
+                low = name.lower()
+                break
+        if _looks_generic(low):
+            name = ""
+    if name:
+        return name or (id3_title or "").strip()
+    return (id3_title or "").strip()
+
+
+def _looks_generic(low: str) -> bool:
+    generic = {
+        "unknown",
+        "unknown track",
+        "unknown title",
+        "unknown artist",
+        "untitled",
+        "track",
+        "va",
+        "va-unknown track",
+        "various artists",
+        "",
+    }
+    if low in generic:
+        return True
+    if low.startswith(("audio_", "voice ")):
+        return True
+    return False
+
 
 async def read_audio_metadata(bot, file_id: str, file_size: int = 0):
     """Download the audio file and read embedded metadata tags.
