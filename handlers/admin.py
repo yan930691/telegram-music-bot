@@ -52,6 +52,23 @@ async def is_admin(user_id) -> bool:
     return user_id in ADMIN_IDS
 
 
+@router.message(Command("done"))
+async def done_command(message: Message, state: FSMContext):
+    if not await is_admin(message.from_user.id):
+        return
+    current = await state.get_state()
+    if current == AdminStates.upload_music.state:
+        data = await state.get_data()
+        if not (data.get("pending_songs") or []):
+            await message.answer("⚠️ သီချင်း မပို့ရသေးပါ!")
+            return
+        await _apply_finish_upload(message, state)
+    elif current == AdminStates.adding_songs.state:
+        await _apply_finish_batch(message, state)
+    else:
+        await message.answer("ℹ️ လက်ရှိ တင်နေသည့် flow မရှိပါ။")
+
+
 # ---------------- Admin menu ----------------
 @router.callback_query(F.data == "admin_menu")
 async def admin_menu(callback: CallbackQuery):
@@ -484,7 +501,7 @@ async def upload_song(message: Message, state: FSMContext):
         line += "\n⚠️ အဆိုတော် နာမည် မပါပါ — caption 'Song | Artist' ဖြင့် ပို့နိုင်သည်"
     line += (
         f"\n📀 {html.escape(album) or '—'}\n\n"
-        "ထပ်ပို့ပါ — ပြီးရင် \"✅ ပြီးပါပြီ\" နှိပ်ပါ 👇"
+        "ထပ်ပို့ပါ — ပြီးရင် \"✅ ပြီးပါပြီ\" ခလုတ် သို့မဟုတ် /done 👇"
     )
     await message.answer(line, parse_mode="HTML", reply_markup=upload_batch_kb())
 
@@ -506,7 +523,7 @@ async def upload_set_album_name(message: Message, state: FSMContext):
 @router.message(AdminStates.upload_music)
 async def upload_wrong_type(message: Message):
     await message.answer(
-        "⚠️ အသံဖိုင်ကို forward/ပို့ပါ၊ သို့မဟုတ် photo ပို့ပါ — ပြီးရင် \"✅ ပြီးပါပြီ\" နှိပ်ပါ။",
+        "⚠️ အသံဖိုင်ကို forward/ပို့ပါ၊ သို့မဟုတ် photo ပို့ပါ — ပြီးရင် \"✅ ပြီးပါပြီ\" ခလုတ် သို့မဟုတ် /done ပါ။",
         parse_mode="HTML",
     )
 
@@ -520,20 +537,13 @@ async def _announce_upload(bot, summary: str):
         logging.warning(f"Upload announce failed: {e}")
 
 
-@router.callback_query(F.data == "finish_upload")
-async def finish_upload(callback: CallbackQuery, state: FSMContext):
-    if not await is_admin(callback.from_user.id):
-        await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
-        return
+async def _apply_finish_upload(reply_target, state: FSMContext) -> bool:
+    """Finish the /upload batch flow. reply_target must have .answer() and .bot."""
     data = await state.get_data()
     pending = data.get("pending_songs") or []
     cat_id = data.get("cat_id")
     cover = data.get("cover", "") or ""
     batch_album_name = data.get("album_name", "") or ""
-
-    if not pending:
-        await callback.answer("⚠️ သီချင်း မပို့ရသေးပါ!", show_alert=True)
-        return
 
     artists_used = {}
     albums_used = {}
@@ -582,8 +592,7 @@ async def finish_upload(callback: CallbackQuery, state: FSMContext):
     for i, a in enumerate(albums_order, 1):
         text += f"{i}. {html.escape(a)} — {html.escape(artists_used[a])}\n"
 
-    await callback.message.answer(text, parse_mode="HTML")
-    await callback.answer()
+    await reply_target.answer(text, parse_mode="HTML")
 
     artists_list = "၊ ".join(sorted(set(artists_order)))
     sum_text = (
@@ -591,7 +600,21 @@ async def finish_upload(callback: CallbackQuery, state: FSMContext):
         f"🎵 {count} ပုဒ် — 🎤 {artists_list or 'အမည်မသိ'}\n"
         f"🎧 Bot ၌ နားထောင်နိုင်ပါပြီ"
     )
-    await _announce_upload(callback.bot, sum_text)
+    await _announce_upload(reply_target.bot, sum_text)
+    return True
+
+
+@router.callback_query(F.data == "finish_upload")
+async def finish_upload(callback: CallbackQuery, state: FSMContext):
+    if not await is_admin(callback.from_user.id):
+        await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
+        return
+    data = await state.get_data()
+    if not (data.get("pending_songs") or []):
+        await callback.answer("⚠️ သီချင်း မပို့ရသေးပါ!", show_alert=True)
+        return
+    await _apply_finish_upload(callback.message, state)
+    await callback.answer()
 
 
 @router.callback_query(F.data == "cancel_upload")
@@ -758,7 +781,7 @@ async def _begin_song_batch(message: Message, state: FSMContext, album_id):
         f"📀 <b>{html.escape(album_name)}</b>\n\n"
         "1️⃣ ချန်နယ် (သို့) အခြားနေရာမှ အသံဖိုင်များကို forward/ပို့ပါ — "
         "တစ်ခါတည်း အများကြီး ပို့လို့ရပါသည်\n"
-        "2️⃣ အားလုံး ပို့ပြီးရင် \"✅ ပြီးပါပြီ\" ခလုတ် နှိပ်ပါ\n\n"
+        "2️⃣ အားလုံး ပို့ပြီးရင် \"✅ ပြီးပါပြီ\" ခလုတ် (သို့မဟုတ် /done) နှိပ်ပါ\n\n"
         "💡 သီချင်းတစ်ပုဒ်ချင်းစီ နာမည် သတ်မှတ်ချင်ရင် ဖိုင်မပို့ခင် "
         "နာမည် ဦးစွာ ရိုက်ထည့်နိုင်ပါသည် (မထည့်ရင် ဖိုင်မှ metadata အတိုင်း ယူပါမည်)"
     )
@@ -810,7 +833,7 @@ async def add_batch_song(message: Message, state: FSMContext):
     await message.answer(
         f"📥 <b>သီချင်း ({count})</b> ✅\n\n"
         f"🎵 <b>{html.escape(title)}</b>\n"
-        "ထပ်ပို့ပါ — အားလုံးပြီးရင် \"✅ ပြီးပါပြီ\" နှိပ်ပါ 👇",
+        "ထပ်ပို့ပါ — အားလုံးပြီးရင် \"✅ ပြီးပါပြီ\" ခလုတ် သို့မဟုတ် /done နှိပ်ပါ 👇",
         parse_mode="HTML",
         reply_markup=adding_songs_kb(album_id),
     )
@@ -833,15 +856,16 @@ async def set_batch_song_title(message: Message, state: FSMContext):
 @router.message(AdminStates.adding_songs)
 async def batch_add_wrong_type(message: Message):
     await message.answer(
-        "⚠️ <b>အသံဖိုင် (.mp3) ပို့ပါ</b> သို့မဟုတ် \"✅ ပြီးပါပြီ\" ခလုတ် နှိပ်ပါ။",
+        "⚠️ <b>အသံဖိုင် (.mp3) ပို့ပါ</b> သို့မဟုတ် \"✅ ပြီးပါပြီ\" ခလုတ် (သို့မဟုတ် /done) နှိပ်ပါ။",
         parse_mode="HTML",
     )
 
 
-@router.callback_query(F.data.startswith("finish_songs:"))
-async def finish_batch(callback: CallbackQuery, state: FSMContext):
-    album_id = ObjectId(callback.data.split(":")[1])
+async def _apply_finish_batch(reply_target, state: FSMContext, album_id=None) -> bool:
+    """Finish the add-songs-to-existing-album flow. reply_target must have .answer()."""
     data = await state.get_data()
+    if album_id is None:
+        album_id = data.get("song_album_id")
     count = data.get("song_count", 0)
     album = await db.get_album(album_id)
     album_name = album["name"] if album else ""
@@ -853,6 +877,7 @@ async def finish_batch(callback: CallbackQuery, state: FSMContext):
             "အသံဖိုင်များ forward ပို့ပြီးမှ \"✅ ပြီးပါပြီ\" ခလုတ် နှိပ်ပါ။"
         )
         kb = album_added_kb(album_id)
+        ok = False
     else:
         text = (
             f"✅ <b>ပြီးပါပြီ!</b>\n\n"
@@ -861,7 +886,15 @@ async def finish_batch(callback: CallbackQuery, state: FSMContext):
             "🎧 User များ အခု album ထဲမှ နားဆင် / ဒေါင်းလုဒ်လို့ ရပါပြီ!"
         )
         kb = song_added_kb(album_id)
-    await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
+        ok = True
+    await reply_target.answer(text, parse_mode="HTML", reply_markup=kb)
+    return ok
+
+
+@router.callback_query(F.data.startswith("finish_songs:"))
+async def finish_batch(callback: CallbackQuery, state: FSMContext):
+    album_id = ObjectId(callback.data.split(":")[1])
+    await _apply_finish_batch(callback.message, state, album_id=album_id)
     await callback.answer()
 
 
