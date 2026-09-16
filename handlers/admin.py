@@ -642,10 +642,9 @@ async def auto_save_forwarded(message: Message):
             artist_id=artist_doc["_id"],
         )
         await message.answer(
-            f"✅ <b>သိမ်းပြီးပါပြီ!</b>\n\n"
-            f"🎵 <b>{html.escape(title)}</b>\n"
-            f"🎤 {html.escape(artist_doc['name'])}\n"
-            f"📀 {html.escape(album_doc['name'])}",
+            f"✅ <b>{html.escape(title)}</b>\n"
+            f"<b>{html.escape(album_doc['name'])}</b> ထဲထည့်ပြီးပါပြီ။\n\n"
+            "နောက်သီချင်းကို ဆက်ပို့ပါ။ ပြီးရင် /done",
             parse_mode="HTML",
         )
     except Exception as e:
