@@ -220,5 +220,26 @@ class Database:
         users = await self.db.users.count_documents({})
         return {"songs": songs, "albums": albums, "users": users}
 
+    # ---------------- Pending upload batches (survive bot restarts) ----------------
+    async def get_pending_upload(self, user_id):
+        return await self.db.pending_uploads.find_one({"_id": user_id})
+
+    async def save_pending_upload(self, user_id, **fields):
+        await self.db.pending_uploads.update_one(
+            {"_id": user_id},
+            {"$set": fields},
+            upsert=True,
+        )
+
+    async def append_pending_song(self, user_id, song):
+        await self.db.pending_uploads.update_one(
+            {"_id": user_id},
+            {"$push": {"pending_songs": song}},
+            upsert=True,
+        )
+
+    async def clear_pending_upload(self, user_id):
+        await self.db.pending_uploads.delete_one({"_id": user_id})
+
 
 db = Database()

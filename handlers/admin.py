@@ -59,14 +59,19 @@ async def done_command(message: Message, state: FSMContext):
     current = await state.get_state()
     if current == AdminStates.upload_music.state:
         data = await state.get_data()
-        if not (data.get("pending_songs") or []):
+        pending = await _load_pending_batch(message.from_user.id)
+        if not pending and not (data.get("pending_songs") or []):
             await message.answer("⚠️ သီချင်း မပို့ရသေးပါ!")
             return
         await _apply_finish_upload(message, state)
     elif current == AdminStates.adding_songs.state:
         await _apply_finish_batch(message, state)
     else:
-        await message.answer("ℹ️ လက်ရှိ တင်နေသည့် flow မရှိပါ။")
+        pending = await _load_pending_batch(message.from_user.id)
+        if pending:
+            await _apply_finish_upload(message, state)
+        else:
+            await message.answer("ℹ️ လက်ရှိ တင်နေသည့် flow မရှိပါ။")
 
 
 # ---------------- Admin menu ----------------
@@ -422,6 +427,13 @@ async def upload_choose_cat(callback: CallbackQuery, state: FSMContext):
         await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
         return
     cat_id = ObjectId(callback.data.split(":")[1])
+    await db.save_pending_upload(
+        callback.from_user.id,
+        cat_id=cat_id,
+        cover="",
+        album_name="",
+        pending_songs=[],
+    )
     await state.set_data(
         {"cat_id": cat_id, "cover": "", "album_name": "", "pending_songs": []}
     )
@@ -496,25 +508,24 @@ async def upload_cover(message: Message, state: FSMContext):
     data = await state.get_data()
     cover = message.photo[-1].file_id
     album = (message.caption or "").strip()
+    await db.save_pending_upload(message.from_user.id, cover=cover)
     await state.update_data(cover=cover)
     text = "🖼 <b>ကာဗာပုံ ရရှိပြီ!</b>"
     if album:
+        await db.save_pending_upload(message.from_user.id, album_name=album)
         await state.update_data(album_name=album)
         text += f"\n📀 Album နာမည်: <b>{html.escape(album)}</b>"
     text += "\n\nအခု သီချင်းများ ပို့ပါ 👇"
     await message.answer(text, parse_mode="HTML", reply_markup=upload_batch_kb())
 
 
-@router.message(AdminStates.upload_music, F.audio | F.document)
-async def upload_song(message: Message, state: FSMContext):
-    if message.document and "audio" not in (message.document.mime_type or ""):
-        await message.answer("⚠️ <b>အသံဖိုင် သာ ပို့နိုင်ပါသည်။</b>", parse_mode="HTML")
-        return
+async def _append_to_pending(message: Message, state: FSMContext) -> list:
+    """Append the forwarded audio to the persisted upload batch. Returns updated pending list."""
     data = await state.get_data()
+    pending = await _load_pending_batch(message.from_user.id)
     title, artist, album, file_id, file_size, duration = await _parse_song_meta(
         message, data.get("album_name", "") or ""
     )
-    pending = data.get("pending_songs") or []
     pending.append(
         {
             "title": title,
@@ -525,7 +536,28 @@ async def upload_song(message: Message, state: FSMContext):
             "duration": duration,
         }
     )
+    await db.append_pending_song(message.from_user.id, pending[-1])
     await state.update_data(pending_songs=pending, album_name=album or data.get("album_name", ""))
+    return pending
+
+
+@router.message(AdminStates.upload_music, F.audio | F.document)
+async def upload_song(message: Message, state: FSMContext):
+    if message.document and "audio" not in (message.document.mime_type or ""):
+        await message.answer("⚠️ <b>အသံဖိုင် သာ ပို့နိုင်ပါသည်။</b>", parse_mode="HTML")
+        return
+    try:
+        pending = await _append_to_pending(message, state)
+    except Exception:
+        await message.answer(
+            "⚠️ <b>ဤဖိုင်ကို မဖတ်နိုင်ပါ — နောက်တစ်ခု စမ်းပါ။</b>",
+            parse_mode="HTML",
+            reply_markup=upload_batch_kb(),
+        )
+        return
+    title = pending[-1]["title"]
+    artist = pending[-1]["artist"]
+    album = pending[-1]["album"]
     line = f"📥 <b>သီချင်း ({len(pending)})</b> ✅\n\n🎵 <b>{html.escape(title)}</b>"
     if artist:
         line += f"\n🎤 {html.escape(artist)}"
@@ -543,6 +575,7 @@ async def upload_set_album_name(message: Message, state: FSMContext):
     if message.text.startswith("/"):
         return
     album = normalize_myanmar(message.text.strip())
+    await db.save_pending_upload(message.from_user.id, album_name=album)
     await state.update_data(album_name=album)
     await message.answer(
         f"📀 <b>{html.escape(album)}</b>\n\n"
@@ -569,13 +602,23 @@ async def _announce_upload(bot, summary: str):
         logging.warning(f"Upload announce failed: {e}")
 
 
+async def _load_pending_batch(user_id) -> list:
+    """Return the persisted pending upload batch (survives bot restarts)."""
+    batch = await db.get_pending_upload(user_id)
+    if batch and batch.get("pending_songs"):
+        return list(batch["pending_songs"])
+    return []
+
+
 async def _apply_finish_upload(reply_target, state: FSMContext) -> bool:
     """Finish the /upload batch flow. reply_target must have .answer() and .bot."""
+    user_id = reply_target.chat.id
     data = await state.get_data()
-    pending = data.get("pending_songs") or []
-    cat_id = data.get("cat_id")
-    cover = data.get("cover", "") or ""
-    batch_album_name = data.get("album_name", "") or ""
+    batch = await db.get_pending_upload(user_id) or {}
+    pending = batch.get("pending_songs") or data.get("pending_songs") or []
+    cat_id = data.get("cat_id") or batch.get("cat_id")
+    cover = (data.get("cover") or batch.get("cover") or "").strip()
+    batch_album_name = data.get("album_name", "") or batch.get("album_name", "") or ""
 
     artists_used = {}
     albums_used = {}
@@ -615,6 +658,7 @@ async def _apply_finish_upload(reply_target, state: FSMContext) -> bool:
         count += 1
 
     await state.clear()
+    await db.clear_pending_upload(user_id)
 
     text = f"✅ <b>ထည့်ပြီးပါပြီ!</b>\n\n"
     text += f"🎵 သီချင်း: <b>{count}</b> ပုဒ်\n"
@@ -641,8 +685,8 @@ async def finish_upload(callback: CallbackQuery, state: FSMContext):
     if not await is_admin(callback.from_user.id):
         await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
         return
-    data = await state.get_data()
-    if not (data.get("pending_songs") or []):
+    pending = await _load_pending_batch(callback.from_user.id)
+    if not pending:
         await callback.answer("⚠️ သီချင်း မပို့ရသေးပါ!", show_alert=True)
         return
     await _apply_finish_upload(callback.message, state)
@@ -655,6 +699,7 @@ async def cancel_upload(callback: CallbackQuery, state: FSMContext):
         await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
         return
     await state.clear()
+    await db.clear_pending_upload(callback.from_user.id)
     await callback.message.answer(
         "❌ <b>တင်ခြင်း ရပ်လိုက်ပါပြီ</b>",
         parse_mode="HTML",
@@ -665,13 +710,43 @@ async def cancel_upload(callback: CallbackQuery, state: FSMContext):
 
 # ---------------- Generic admin forward auto-save (no active FSM) ----------------
 
+async def _resume_pending_upload(message: Message, state: FSMContext, pending: list):
+    """The bot restarted mid-/upload, so FSM was wiped but the batch survives in DB.
+    Re-enter the upload flow so this forward keeps queuing into the same album."""
+    batch = await db.get_pending_upload(message.from_user.id) or {}
+    await state.set_data(
+        {
+            "cat_id": batch.get("cat_id"),
+            "cover": batch.get("cover", "") or "",
+            "album_name": batch.get("album_name", "") or "",
+            "pending_songs": pending,
+        }
+    )
+    await state.set_state(AdminStates.upload_music)
+    await _append_to_pending(message, state)
+    new_pending = await _load_pending_batch(message.from_user.id)
+    s = new_pending[-1]
+    line = f"📥 <b>သီချင်း ({len(new_pending)})</b> ✅\n\n🎵 <b>{html.escape(s['title'])}</b>"
+    if s.get("artist"):
+        line += f"\n🎤 {html.escape(s['artist'])}"
+    if not s.get("artist"):
+        line += "\n⚠️ အဆိုတော် နာမည် မပါပါ — caption 'Song | Artist' ဖြင့် ပို့နိုင်သည်"
+    line += f"\n📀 {html.escape(s.get('album') or '') or '—'}\n\n"
+    line += "\"✅ ပြီးပါပြီ\" ခလုတ် (သို့) /done နှိပ်ပါ"
+    await message.answer(line, parse_mode="HTML", reply_markup=upload_batch_kb())
+
+
 @router.message(StateFilter(None), F.audio | F.document)
-async def auto_save_forwarded(message: Message):
+async def auto_save_forwarded(message: Message, state: FSMContext):
     if not await is_admin(message.from_user.id):
         return
     if message.chat.type != "private":
         return
     if message.document and "audio" not in (message.document.mime_type or ""):
+        return
+    pending = await _load_pending_batch(message.from_user.id)
+    if pending:
+        await _resume_pending_upload(message, state, pending)
         return
     try:
         title, artist, album, file_id, file_size, duration = await _parse_song_meta(
@@ -707,6 +782,12 @@ async def auto_save_forwarded(message: Message):
         )
     except Exception as e:
         logging.warning(f"Auto-save failed: {e}")
+        await message.answer(
+            "⚠️ <b>ဤသီချင်းကို သိမ်း၍မရပါ</b>\n\n"
+            f"အမှား: <code>{html.escape(str(e))}</code>\n\n"
+            "ပြန်လည် ပို့ကြည့်ပါ သို့မဟုတ် /upload ဖြင့် ထပ်စမ်းပါ။",
+            parse_mode="HTML",
+        )
 
 
 # ---------------- FSM states ----------------
