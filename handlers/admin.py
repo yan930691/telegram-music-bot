@@ -30,7 +30,7 @@ from keyboards.inline import (
 )
 from utils.formatters import split_caption
 from utils.converter import normalize_myanmar
-from utils.metadata import read_audio_metadata, pick_song_title
+from utils.metadata import read_audio_metadata, pick_song_title, extract_track_no
 
 router = Router()
 admin_router = router  # all callbacks gated by is_admin check
@@ -558,8 +558,11 @@ async def upload_song(message: Message, state: FSMContext):
     title = pending[-1]["title"]
     artist = pending[-1]["artist"]
     album = pending[-1]["album"]
-    seq = len(pending)
-    line = f"📥 <b>သီချင်း №{seq}</b> ✅\n\n🎵 <b>{html.escape(title)}</b>"
+    track_no = extract_track_no(title)
+    line = f"📥 <b>သီချင်း ({len(pending)})</b> ✅\n\n"
+    if track_no:
+        line += f"#️⃣ <b>№{track_no:02d}</b>\n"
+    line += f"🎵 <b>{html.escape(title)}</b>"
     if artist:
         line += f"\n🎤 {html.escape(artist)}"
     if not artist:
@@ -625,7 +628,6 @@ async def _apply_finish_upload(reply_target, state: FSMContext) -> bool:
     albums_used = {}
     artists_order = []
     albums_order = []
-    albums_next_no = {}
     songs_by_album = {}
     count = 0
 
@@ -649,12 +651,8 @@ async def _apply_finish_upload(reply_target, state: FSMContext) -> bool:
         if album_name not in albums_used:
             albums_used[album_name] = album["_id"]
             albums_order.append(album_name)
-        if album["_id"] not in albums_next_no:
-            latest = await db.db.songs.find({"album_id": album["_id"]}).sort("track_no", -1).limit(1).to_list(1)
-            albums_next_no[album["_id"]] = (latest[0].get("track_no") or 0) + 1 if latest else 1
 
-        track_no = albums_next_no[album["_id"]]
-        albums_next_no[album["_id"]] = track_no + 1
+        track_no = extract_track_no(s["title"])
         count += 1
         await db.add_song(
             s["title"],
@@ -682,8 +680,8 @@ async def _apply_finish_upload(reply_target, state: FSMContext) -> bool:
         for a in albums_order:
             songs = songs_by_album.get(a, [])
             text += f"📀 <b>{html.escape(a)}</b>\n"
-            for track_no, title in songs:
-                text += f"№{track_no}. {html.escape(title)}\n"
+            for i, (track_no, title) in enumerate(songs, 1):
+                text += f"№{track_no or i}. {html.escape(title)}\n"
             text += "\n"
 
     await reply_target.answer(text, parse_mode="HTML")
@@ -744,8 +742,11 @@ async def _resume_pending_upload(message: Message, state: FSMContext, pending: l
     await _append_to_pending(message, state)
     new_pending = await _load_pending_batch(message.from_user.id)
     s = new_pending[-1]
-    seq = len(new_pending)
-    line = f"📥 <b>သီချင်း №{seq}</b> ✅\n\n🎵 <b>{html.escape(s['title'])}</b>"
+    track_no = extract_track_no(s["title"])
+    line = f"📥 <b>သီချင်း ({len(new_pending)})</b> ✅\n\n"
+    if track_no:
+        line += f"#️⃣ <b>№{track_no:02d}</b>\n"
+    line += f"🎵 <b>{html.escape(s['title'])}</b>"
     if s.get("artist"):
         line += f"\n🎤 {html.escape(s['artist'])}"
     if not s.get("artist"):
@@ -785,8 +786,6 @@ async def auto_save_forwarded(message: Message, state: FSMContext):
             category_id=None,
             artist_id=artist_doc["_id"],
         )
-        latest = await db.db.songs.find({"album_id": album_doc["_id"]}).sort("track_no", -1).limit(1).to_list(1)
-        next_no = (latest[0].get("track_no") or 0) + 1 if latest else 1
         await db.add_song(
             title,
             album_doc["_id"],
@@ -794,12 +793,15 @@ async def auto_save_forwarded(message: Message, state: FSMContext):
             file_size,
             duration,
             artist_id=artist_doc["_id"],
-            track_no=next_no,
+            track_no=extract_track_no(title),
         )
+        track_no = extract_track_no(title)
         count = await db.db.songs.count_documents({"album_id": album_doc["_id"]})
+        first = f"#️⃣ <b>№{track_no:02d}</b>\n" if track_no else ""
         await message.answer(
             f"✅ <b>{html.escape(title)}</b>\n"
-            f"#️⃣ <b>№{count}</b> — {html.escape(album_doc['name'])} ထဲထည့်ပြီးပါပြီ။\n"
+            f"{first}"
+            f"<b>{html.escape(album_doc['name'])}</b> ထဲထည့်ပြီးပါပြီ။\n"
             f"📋 စုစုပေါင်း: {count} ပုဒ်\n\n"
             "နောက်သီချင်းကို ဆက်ပို့ပါ။ ပြီးရင် /done",
             parse_mode="HTML",
@@ -980,16 +982,17 @@ async def add_batch_song(message: Message, state: FSMContext):
     if not custom_title and title.lower().endswith((".mp3", ".m4a", ".ogg", ".wav")):
         title = title.rsplit(".", 1)[0]
 
-    latest = await db.db.songs.find({"album_id": album_id}).sort("track_no", -1).limit(1).to_list(1)
-    next_no = (latest[0].get("track_no") or 0) + 1 if latest else 1
+    track_no = extract_track_no(title)
     await db.add_song(
-        title, album_id, file_id, file_size, duration, track_no=next_no
+        title, album_id, file_id, file_size, duration, track_no=track_no
     )
     count = data.get("song_count", 0) + 1
     await state.update_data(song_count=count, pending_title=None)
 
+    first = f"#️⃣ <b>№{track_no:02d}</b>\n" if track_no else ""
     await message.answer(
-        f"📥 <b>သီချင်း №{next_no}</b> ✅\n\n"
+        f"📥 <b>သီချင်း ({count})</b> ✅\n\n"
+        f"{first}"
         f"🎵 <b>{html.escape(title)}</b>\n"
         f"📀 {html.escape(album_name)} ထဲ ထည့်ပြီးပါပြီ။\n"
         "ထပ်ပို့ပါ — အားလုံးပြီးရင် \"✅ ပြီးပါပြီ\" ခလုတ် သို့မဟုတ် /done နှိပ်ပါ 👇",
