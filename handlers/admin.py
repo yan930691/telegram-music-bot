@@ -558,10 +558,7 @@ async def upload_song(message: Message, state: FSMContext):
     title = pending[-1]["title"]
     artist = pending[-1]["artist"]
     album = pending[-1]["album"]
-    track_no = extract_track_no(title)
     line = f"📥 <b>သီချင်း ({len(pending)})</b> ✅\n\n"
-    if track_no:
-        line += f"#️⃣ <b>№{track_no:02d}</b>\n"
     line += f"🎵 <b>{html.escape(title)}</b>"
     if artist:
         line += f"\n🎤 {html.escape(artist)}"
@@ -678,7 +675,9 @@ async def _apply_finish_upload(reply_target, state: FSMContext) -> bool:
     if songs_by_album:
         text += "\n"
         for a in albums_order:
-            songs = songs_by_album.get(a, [])
+            songs = sorted(
+                songs_by_album.get(a, []), key=lambda x: (x[0] is None, x[0] or 0)
+            )
             text += f"📀 <b>{html.escape(a)}</b>\n"
             for i, (track_no, title) in enumerate(songs, 1):
                 text += f"№{track_no or i}. {html.escape(title)}\n"
@@ -742,10 +741,7 @@ async def _resume_pending_upload(message: Message, state: FSMContext, pending: l
     await _append_to_pending(message, state)
     new_pending = await _load_pending_batch(message.from_user.id)
     s = new_pending[-1]
-    track_no = extract_track_no(s["title"])
     line = f"📥 <b>သီချင်း ({len(new_pending)})</b> ✅\n\n"
-    if track_no:
-        line += f"#️⃣ <b>№{track_no:02d}</b>\n"
     line += f"🎵 <b>{html.escape(s['title'])}</b>"
     if s.get("artist"):
         line += f"\n🎤 {html.escape(s['artist'])}"
@@ -764,48 +760,14 @@ async def auto_save_forwarded(message: Message, state: FSMContext):
         return
     if message.document and "audio" not in (message.document.mime_type or ""):
         return
+    # If the admin forwards audio without an active /upload flow, auto-start a
+    # new batch so the same acceptance (sequential № + buttons + /done) applies.
     pending = await _load_pending_batch(message.from_user.id)
-    if pending:
-        await _resume_pending_upload(message, state, pending)
-        return
+    if not pending:
+        await db.save_pending_upload(message.from_user.id, album_name="")
+        pending = await _load_pending_batch(message.from_user.id)
     try:
-        title, artist, album, file_id, file_size, duration = await _parse_song_meta(
-            message, ""
-        )
-        existing = await db.db.songs.find_one({"file_id": file_id})
-        if existing:
-            await message.answer("ℹ️ ဤသီချင်းကို သိမ်းပြီးသား ဖြစ်ပါသည်။")
-            return
-
-        artist_doc = await db.get_or_create_artist(artist or "အမည်မသိ")
-        album_name = album or f"{artist_doc['name']} — အယ်လ်ဘမ်"
-        # Find an existing album for this artist, else create one via default category
-        album_doc = await db.get_or_create_album(
-            album_name,
-            artist=artist_doc["name"],
-            category_id=None,
-            artist_id=artist_doc["_id"],
-        )
-        await db.add_song(
-            title,
-            album_doc["_id"],
-            file_id,
-            file_size,
-            duration,
-            artist_id=artist_doc["_id"],
-            track_no=extract_track_no(title),
-        )
-        track_no = extract_track_no(title)
-        count = await db.db.songs.count_documents({"album_id": album_doc["_id"]})
-        first = f"#️⃣ <b>№{track_no:02d}</b>\n" if track_no else ""
-        await message.answer(
-            f"✅ <b>{html.escape(title)}</b>\n"
-            f"{first}"
-            f"<b>{html.escape(album_doc['name'])}</b> ထဲထည့်ပြီးပါပြီ။\n"
-            f"📋 စုစုပေါင်း: {count} ပုဒ်\n\n"
-            "နောက်သီချင်းကို ဆက်ပို့ပါ။ ပြီးရင် /done",
-            parse_mode="HTML",
-        )
+        await _resume_pending_upload(message, state, pending)
     except Exception as e:
         logging.warning(f"Auto-save failed: {e}")
         await message.answer(
@@ -989,10 +951,8 @@ async def add_batch_song(message: Message, state: FSMContext):
     count = data.get("song_count", 0) + 1
     await state.update_data(song_count=count, pending_title=None)
 
-    first = f"#️⃣ <b>№{track_no:02d}</b>\n" if track_no else ""
     await message.answer(
         f"📥 <b>သီချင်း ({count})</b> ✅\n\n"
-        f"{first}"
         f"🎵 <b>{html.escape(title)}</b>\n"
         f"📀 {html.escape(album_name)} ထဲ ထည့်ပြီးပါပြီ။\n"
         "ထပ်ပို့ပါ — အားလုံးပြီးရင် \"✅ ပြီးပါပြီ\" ခလုတ် သို့မဟုတ် /done နှိပ်ပါ 👇",
