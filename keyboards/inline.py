@@ -94,8 +94,9 @@ def album_actions_kb(album_id, is_admin=False) -> InlineKeyboardMarkup:
 def songs_kb(songs, album_id) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for i, song in enumerate(songs, start=1):
+        num = song.get("track_no") or i
         builder.button(
-            text=f"🎵 {i}. {song['title']}",
+            text=f"🎵 {num}. {song['title']}",
             callback_data=f"song:{song['_id']}",
         )
     builder.button(text="📥 အယ်လ်ဘမ်အားလုံး ဒေါင်းလုဒ်", callback_data=f"dl_album:{album_id}")
@@ -107,8 +108,9 @@ def songs_kb(songs, album_id) -> InlineKeyboardMarkup:
 def album_songs_to_send(album_id, songs) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for i, song in enumerate(songs, start=1):
+        num = song.get("track_no") or i
         builder.button(
-            text=f"{i}. {song['title']}",
+            text=f"{num}. {song['title']}",
             callback_data=f"send_song:{song['_id']}",
         )
     builder.button(text="❌ ပိတ်မည်", callback_data="cancel")

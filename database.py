@@ -144,7 +144,17 @@ class Database:
 
     # ---------------- Songs ----------------
     async def get_songs(self, album_id):
-        return await self.db.songs.find({"album_id": album_id}).to_list(length=100)
+        songs = await self.db.songs.find({"album_id": album_id}).to_list(length=100)
+        # Natural order is unreliable; keep the album in the admin's track order.
+        # Numbered tracks sort first (by their number), then unnumbered by upload time.
+        songs.sort(
+            key=lambda s: (
+                s.get("track_no") is None,
+                s.get("track_no") or 0,
+                s.get("created_at"),
+            )
+        )
+        return songs
 
     async def get_all_songs(self, limit=200):
         return await self.db.songs.find().sort("title", 1).to_list(length=limit)
@@ -152,7 +162,7 @@ class Database:
     async def get_song(self, song_id):
         return await self.db.songs.find_one({"_id": song_id})
 
-    async def add_song(self, title, album_id, file_id, file_size=0, duration=0, artist_id=None):
+    async def add_song(self, title, album_id, file_id, file_size=0, duration=0, artist_id=None, track_no=None):
         return await self.db.songs.insert_one(
             {
                 "title": title,
@@ -161,6 +171,7 @@ class Database:
                 "file_id": file_id,
                 "file_size": file_size,
                 "duration": duration,
+                "track_no": track_no,
                 "downloads": 0,
                 "created_at": __import__("datetime").datetime.utcnow(),
             }

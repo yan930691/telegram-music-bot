@@ -7,7 +7,7 @@ from database import db
 from config import CHANNEL_ID
 from utils.formatters import split_caption
 from utils.converter import normalize_myanmar
-from utils.metadata import read_audio_metadata, pick_song_title
+from utils.metadata import read_audio_metadata, pick_song_title, extract_track_no
 
 router = Router()
 
@@ -112,6 +112,7 @@ async def on_channel_audio(message: Message):
             file_size,
             duration,
             artist_id=artist["_id"],
+            track_no=extract_track_no(title),
         )
 
         await message.reply(

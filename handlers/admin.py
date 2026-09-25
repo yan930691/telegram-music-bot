@@ -30,7 +30,7 @@ from keyboards.inline import (
 )
 from utils.formatters import split_caption
 from utils.converter import normalize_myanmar
-from utils.metadata import read_audio_metadata, pick_song_title
+from utils.metadata import read_audio_metadata, pick_song_title, extract_track_no
 
 router = Router()
 admin_router = router  # all callbacks gated by is_admin check
@@ -654,6 +654,7 @@ async def _apply_finish_upload(reply_target, state: FSMContext) -> bool:
             s["file_size"],
             s["duration"],
             artist_id=artist["_id"],
+            track_no=extract_track_no(s["title"]),
         )
         count += 1
 
@@ -773,6 +774,7 @@ async def auto_save_forwarded(message: Message, state: FSMContext):
             file_size,
             duration,
             artist_id=artist_doc["_id"],
+            track_no=extract_track_no(title),
         )
         await message.answer(
             f"✅ <b>{html.escape(title)}</b>\n"
@@ -954,7 +956,9 @@ async def add_batch_song(message: Message, state: FSMContext):
     if not custom_title and title.lower().endswith((".mp3", ".m4a", ".ogg", ".wav")):
         title = title.rsplit(".", 1)[0]
 
-    await db.add_song(title, album_id, file_id, file_size, duration)
+    await db.add_song(
+        title, album_id, file_id, file_size, duration, track_no=extract_track_no(title)
+    )
     count = data.get("song_count", 0) + 1
     await state.update_data(song_count=count, pending_title=None)
 

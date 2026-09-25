@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import tempfile
 
 from mutagen import File as MutagenFile
@@ -7,6 +8,19 @@ from mutagen import File as MutagenFile
 MAX_READ_SIZE = 80 * 1024 * 1024  # skip files larger than 80 MB
 
 _AUDIO_EXTS = (".mp3", ".m4a", ".ogg", ".wav", ".opus", ".flac", ".aac", ".opus")
+
+_TRACK_RE = re.compile(r"^\s*\[?\s*(\d{1,3})\s*\]?\s*(?=[^0-9A-Za-z]|$)")
+
+
+def extract_track_no(text: str):
+    """Return the leading track number ("01 - Song", "1. Song", "[03] A") or None."""
+    t = (text or "").strip()
+    if not t:
+        return None
+    m = _TRACK_RE.match(t)
+    if not m or not m.group(1):
+        return None
+    return int(m.group(1))
 
 
 def pick_song_title(file_name: str, id3_title: str = "") -> str:
