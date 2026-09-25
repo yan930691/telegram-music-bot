@@ -7,7 +7,7 @@ from database import db
 from config import CHANNEL_ID
 from utils.formatters import split_caption
 from utils.converter import normalize_myanmar
-from utils.metadata import read_audio_metadata, pick_song_title, extract_track_no
+from utils.metadata import read_audio_metadata, pick_song_title
 
 router = Router()
 
@@ -105,6 +105,8 @@ async def on_channel_audio(message: Message):
             category_id=None,
             artist_id=artist["_id"],
         )
+        latest = await db.db.songs.find({"album_id": album["_id"]}).sort("track_no", -1).limit(1).to_list(1)
+        next_no = (latest[0].get("track_no") or 0) + 1 if latest else 1
         await db.add_song(
             title,
             album["_id"],
@@ -112,7 +114,7 @@ async def on_channel_audio(message: Message):
             file_size,
             duration,
             artist_id=artist["_id"],
-            track_no=extract_track_no(title),
+            track_no=next_no,
         )
 
         await message.reply(
