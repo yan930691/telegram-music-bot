@@ -558,11 +558,8 @@ async def upload_song(message: Message, state: FSMContext):
     title = pending[-1]["title"]
     artist = pending[-1]["artist"]
     album = pending[-1]["album"]
-    track_no = extract_track_no(title)
-    line = f"📥 <b>သီချင်း ({len(pending)})</b> ✅\n\n"
-    if track_no:
-        line += f"#️⃣ <b>№{track_no:02d}</b>\n"
-    line += f"🎵 <b>{html.escape(title)}</b>"
+    seq = len(pending)
+    line = f"📥 <b>သီချင်း №{seq}</b> ✅\n\n🎵 <b>{html.escape(title)}</b>"
     if artist:
         line += f"\n🎤 {html.escape(artist)}"
     if not artist:
@@ -731,11 +728,8 @@ async def _resume_pending_upload(message: Message, state: FSMContext, pending: l
     await _append_to_pending(message, state)
     new_pending = await _load_pending_batch(message.from_user.id)
     s = new_pending[-1]
-    track_no = extract_track_no(s["title"])
-    line = f"📥 <b>သီချင်း ({len(new_pending)})</b> ✅\n\n"
-    if track_no:
-        line += f"#️⃣ <b>№{track_no:02d}</b>\n"
-    line += f"🎵 <b>{html.escape(s['title'])}</b>"
+    seq = len(new_pending)
+    line = f"📥 <b>သီချင်း №{seq}</b> ✅\n\n🎵 <b>{html.escape(s['title'])}</b>"
     if s.get("artist"):
         line += f"\n🎤 {html.escape(s['artist'])}"
     if not s.get("artist"):
@@ -784,13 +778,10 @@ async def auto_save_forwarded(message: Message, state: FSMContext):
             artist_id=artist_doc["_id"],
             track_no=extract_track_no(title),
         )
-        track_no = extract_track_no(title)
         count = await db.db.songs.count_documents({"album_id": album_doc["_id"]})
-        first = f"#️⃣ <b>№{track_no:02d}</b>\n" if track_no else ""
         await message.answer(
             f"✅ <b>{html.escape(title)}</b>\n"
-            f"{first}"
-            f"<b>{html.escape(album_doc['name'])}</b> ထဲထည့်ပြီးပါပြီ။\n"
+            f"#️⃣ <b>№{count}</b> — {html.escape(album_doc['name'])} ထဲထည့်ပြီးပါပြီ။\n"
             f"📋 စုစုပေါင်း: {count} ပုဒ်\n\n"
             "နောက်သီချင်းကို ဆက်ပို့ပါ။ ပြီးရင် /done",
             parse_mode="HTML",
@@ -975,11 +966,8 @@ async def add_batch_song(message: Message, state: FSMContext):
     count = data.get("song_count", 0) + 1
     await state.update_data(song_count=count, pending_title=None)
 
-    track_no = extract_track_no(title)
-    first = f"#️⃣ <b>№{track_no:02d}</b>\n" if track_no else ""
     await message.answer(
-        f"📥 <b>သီချင်း ({count})</b> ✅\n\n"
-        f"{first}"
+        f"📥 <b>သီချင်း №{count}</b> ✅\n\n"
         f"🎵 <b>{html.escape(title)}</b>\n"
         "ထပ်ပို့ပါ — အားလုံးပြီးရင် \"✅ ပြီးပါပြီ\" ခလုတ် သို့မဟုတ် /done နှိပ်ပါ 👇",
         parse_mode="HTML",
