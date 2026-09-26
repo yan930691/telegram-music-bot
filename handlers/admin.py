@@ -1,5 +1,12 @@
 from aiogram import Router, F
-from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup
+from aiogram.types import (
+    CallbackQuery,
+    Message,
+    InlineKeyboardMarkup,
+    InlineQuery,
+    InlineQueryResultArticle,
+    InputTextMessageContent,
+)
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -28,7 +35,7 @@ from keyboards.inline import (
     upload_cat_kb,
     upload_batch_kb,
 )
-from utils.formatters import split_caption
+from utils.formatters import get_admin_panel_text, split_caption
 from utils.converter import normalize_myanmar
 from utils.metadata import read_audio_metadata, pick_song_title, extract_track_no
 
@@ -81,9 +88,43 @@ async def admin_menu(callback: CallbackQuery):
         await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
         return
     current = callback.message
-    from utils.formatters import get_admin_panel_text
     await current.edit_text(get_admin_panel_text(), parse_mode="HTML", reply_markup=admin_main_kb())
     await callback.answer()
+
+
+# ---------------- Admin Inline Mode (@bot username) ----------------
+@router.inline_query()
+async def admin_inline_menu(query: InlineQuery):
+    # Only admins get results; everyone else sees "no results".
+    if not await is_admin(query.from_user.id):
+        await query.answer([], is_personal=True, cache_time=60)
+        return
+    items = [
+        ("admin_add_cat", "➕ အမျိုးအစား ထည့်", "အမျိုးအစားအသစ် ထပ်ထည့်ရန်", "category"),
+        ("admin_upload", "⬆️ Album + သီချင်းတင်ရန်", "Album အသစ်နှင့် သီချင်းများ တင်ရန်", "upload album"),
+        ("admin_add_song", "🎵 အယ်လ်ဘမ်ထဲ သီချင်းထည့်", "ရှိပြီးသား Album ထဲ သီချင်းထည့်ရန်", "song add"),
+        ("admin_stats", "📊 စာရင်းဇယား", "စာရင်းဇယား ကြည့်ရန်", "stats"),
+        ("admin_delete_menu", "🗑 ဖျက်ရန်", "သီချင်း / Album / အမျိုးအစား ဖျက်ရန်", "delete"),
+    ]
+    q = (query.query or "").strip().lower()
+    results = []
+    for i, (action, title, desc, kw) in enumerate(items, 1):
+        hay = f"{title.lower()} {desc.lower()} {kw.lower()}"
+        if q and q not in hay:
+            continue
+        results.append(
+            InlineQueryResultArticle(
+                id=f"admin_{action}",
+                title=title,
+                description=desc,
+                input_message_content=InputTextMessageContent(
+                    message_text=get_admin_panel_text(),
+                    parse_mode="HTML",
+                ),
+                reply_markup=admin_main_kb(),
+            )
+        )
+    await query.answer(results, is_personal=True, cache_time=0)
 
 
 @router.callback_query(F.data == "admin_add_cat")
