@@ -1,4 +1,5 @@
 import datetime
+import html
 import re
 
 
@@ -66,7 +67,13 @@ def get_help_text():
         "/menu - အဓိက မီနူး\n"
         "/search &lt;အမည်&gt; - အဆိုတော် / သီချင်း ရှာဖွေရန်\n"
         "/admin - (အက်ဒမင် အတွက်) စီမံခန့်ခွဲရန်\n"
-        "/upload - (အက်ဒမင် အတွက်) Album + သီချင်း သွင်းရန်"
+        "/upload - (အက်ဒမင် အတွက်) Album + သီချင်း သွင်းရန်\n\n"
+        "🔊 <b>Voice Chat (VC) ဖွင့်ခြင်း (group အတွင်း):</b>\n"
+        "/play &lt;သီချင်းအမည် / YouTube link&gt; - VC ထဲ သီချင်းဖွင့်ရန်\n"
+        "/vplay &lt;...&gt; - ဗီဒီယို ဖွင့်ရန်\n"
+        "/pause - ရပ်ရန် | /resume - ပြန်ဖွင့်ရန်\n"
+        "/skip - ကျော်ရန် | /stop - ရပ်ရှင်းရန်\n"
+        "/queue - တန်းစီစာရင်း | /seek &lt;စက္ကန့်&gt; - ရှေ့ကျော်ရန်"
     )
 
 
@@ -77,4 +84,94 @@ def get_admin_panel_text():
         "➕ အမျိုးအစား / အယ်လ်ဘမ် / သီချင်း ထည့်ခြင်း\n"
         "🗑 ဖျက်ခြင်း\n"
         "📊 စာရင်းဇယားကြည့်ခြင်း"
+    )
+
+
+# ===================== Voice Chat (VC) streaming messages =====================
+
+def vc_now_playing(title, duration="00:00", requester=""):
+    return (
+        "▶️ <b>ဖွင့်နေသည်</b>\n\n"
+        f"🎵 <b>{html.escape(str(title))}</b>\n"
+        f"⏱ {duration}\n"
+        f"👤 {html.escape(str(requester or '-'))}"
+    )
+
+
+def vc_replaying():
+    return "🔁 လက်ရှိသီချင်းကို ပြန်ဖွင့်နေသည်..."
+
+
+def vc_queue_empty():
+    return "⏹ တန်းစီစာရင်း ကုန်သွားပါပြီ။"
+
+
+def vc_stopped():
+    return "⏹ ဖွင့်ခြင်းကို ရပ်လိုက်ပါပြီ။"
+
+
+def vc_added_queue(position, title, requester=""):
+    return (
+        f"➕ <b>တန်းစီစာရင်းထဲ ထည့်လိုက်ပါပြီ (#{position})</b>\n\n"
+        f"🎵 {html.escape(str(title))}\n"
+        f"👤 {html.escape(str(requester or '-'))}"
+    )
+
+
+def vc_searching():
+    return "🔍 ရှာဖွေနေသည်..."
+
+
+def vc_downloading():
+    return "⬇️ ဒေါင်းလုဒ်လုပ်နေသည်..."
+
+
+def vc_no_active_call():
+    return (
+        "📵 <b>Group Voice Chat မဖွင့်ရသေးပါ။</b>\n\n"
+        "ကျေးဇူးပြု၍ group ထဲ Voice Chat စတင်ပြီး ထပ်စမ်းပါ။"
+    )
+
+
+def vc_not_playing():
+    return "⚠️ လက်ရှိ ဖွင့်နေတဲ့ သီချင်း မရှိပါ။"
+
+
+def vc_paused():
+    return "⏸ ရပ်ထားလိုက်ပါပြီ။"
+
+
+def vc_resumed():
+    return "▶️ ပြန်ဖွင့်လိုက်ပါပြီ။"
+
+
+def vc_skipped():
+    return "⏭ ကျော်လိုက်ပါပြီ။"
+
+
+def vc_assistant_missing():
+    return (
+        "🚫 <b>Assistant အကောင့်ကို group ထဲ ထည့်ထားဖို့ လိုပါသည်။</b>\n\n"
+        "VC ဖွင့်တဲ့အကောင့် (SESSION ဖန်တီးထားတဲ့ အကောင့်) ကို "
+        "ဒီ group ထဲ member အဖြစ် ထည့်ပေးပါ။"
+    )
+
+
+def vc_need_group():
+    return "❌ VC ဖွင့်နိုင်ရန် group / supergroup ထဲမှာ အသုံးပြုပါ။"
+
+
+def vc_error(msg=""):
+    extra = f"\n\n<code>{html.escape(str(msg))}</code>" if msg else ""
+    return "⚠️ တစ်ခုခု မှားသွားသည်။ ထပ်စမ်းကြည့်ပါ။" + extra
+
+
+def vc_queue_header():
+    return "🎶 <b>တန်းစီစာရင်း</b>"
+
+
+def vc_queue_item(n, title, duration="00:00", requester=""):
+    return (
+        f"<b>{n}.</b> {html.escape(str(title))} — {duration}"
+        f"  <i>({html.escape(str(requester or '-'))})</i>"
     )

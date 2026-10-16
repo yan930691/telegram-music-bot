@@ -2,5 +2,14 @@ aiogram>=3.4
 motor>=3.3
 python-dotenv>=1.0
 aiofiles>=23.2
-aiohttp>=3.9
+aiohttp>=3.14.3
 mutagen>=1.47.0
+
+# ---- Voice chat streaming (VC) ----
+kurigram>=2.2.25
+ntgcalls==3.0.0rc1
+py-tgcalls==3.0.0rc1
+pytgcrypto>=1.2.12
+
+# ---- Media download ----
+yt-dlp[default]>=2026.8.19

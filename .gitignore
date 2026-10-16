@@ -13,6 +13,13 @@ env/
 # Data
 data/music/*
 !data/music/.gitkeep
+data/downloads/
+
+# Secrets / sessions
+*.session
+*.session-journal
+session_generator.session
+log.txt
 
 # IDE
 .vscode/

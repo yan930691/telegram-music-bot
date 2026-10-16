@@ -9,11 +9,12 @@ from aiogram.enums import ParseMode
 from aiohttp import web
 import aiohttp
 
-from config import BOT_TOKEN, ADMIN_IDS, MONGODB_URI, BUILD_VERSION
+from config import BOT_TOKEN, ADMIN_IDS, MONGODB_URI, BUILD_VERSION, STREAM_ENABLED
 from database import db
 
 # Import routers
-from handlers import start, music, search, admin, channel
+from handlers import start, music, search, admin, channel, play
+from utils.stream import stream
 
 # Import message/song state handlers
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -101,6 +102,7 @@ async def main():
     dp.include_router(search.router)
     dp.include_router(admin.router)
     dp.include_router(channel.router)
+    dp.include_router(play.router)
 
     # Connect MongoDB
     try:
@@ -113,6 +115,17 @@ async def main():
     added = await db.seed_default_categories()
     if added:
         logging.info("Seeded default categories: %s", ", ".join(added))
+
+    # Start voice-chat streaming (assistant + PyTgCalls). Non-fatal: if this
+    # fails the bot still works as a music library.
+    if STREAM_ENABLED:
+        try:
+            await stream.boot(bot)
+            logging.info("Voice-chat streaming enabled")
+        except Exception:
+            logging.exception("Voice-chat streaming failed to start (continuing without it)")
+    else:
+        logging.info("Voice-chat streaming disabled (set API_ID, API_HASH, SESSION to enable)")
 
     asyncio.create_task(_keepalive_loop())
 
@@ -127,6 +140,7 @@ async def main():
         logging.exception("Polling crashed")
         raise
     finally:
+        await stream.close()
         await db.close()
         if runner:
             await runner.cleanup()
