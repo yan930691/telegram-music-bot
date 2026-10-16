@@ -1,11 +1,11 @@
 services:
   - type: worker
     name: telegram-music-bot
-    runtime: docker
-    dockerfilePath: ./Dockerfile
+    runtime: python
     region: singapore
-    plan: starter
-    autoDeploy: true
+    plan: free
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python bot.py"
     envVars:
       - key: BOT_TOKEN
         sync: false
@@ -16,24 +16,4 @@ services:
       - key: ADMIN_IDS
         sync: false
       - key: CHANNEL_ID
-        sync: false
-      # ---- Voice-chat streaming (optional) ----
-      - key: API_ID
-        sync: false
-      - key: API_HASH
-        sync: false
-      - key: SESSION
-        sync: false
-      - key: DURATION_LIMIT
-        value: "60"
-      - key: QUEUE_LIMIT
-        value: "20"
-      - key: VIDEO_PLAY
-        value: "True"
-      # ---- Optional ----
-      - key: COOKIES_FILE
-        sync: false
-      - key: SPOTIFY_CLIENT_ID
-        sync: false
-      - key: SPOTIFY_CLIENT_SECRET
         sync: false
