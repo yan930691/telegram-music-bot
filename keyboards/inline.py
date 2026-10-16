@@ -85,8 +85,21 @@ def album_actions_kb(album_id, is_admin=False) -> InlineKeyboardMarkup:
     builder.button(text="📥 အယ်လ်ဘမ်အားလုံး ဒေါင်းလုဒ်", callback_data=f"dl_album:{album_id}")
     if is_admin:
         builder.button(text="➕ သီချင်းထည့်", callback_data=f"add_song:{album_id}")
+        builder.button(text="📂 အမျိုးအစား ပြောင်း", callback_data=f"move_album:{album_id}")
         builder.button(text="🗑 အယ်လ်ဘမ် ဖျက်", callback_data=f"del_album:{album_id}")
     builder.button(text="🔙 နောက်သို့", callback_data="albums_back")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def move_album_cat_kb(album_id, cats) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for cat in cats:
+        builder.button(
+            text=f"📂 {cat['name']}",
+            callback_data=f"movecat:{album_id}:{cat['_id']}",
+        )
+    builder.button(text="🔙 နောက်သို့", callback_data=f"album:{album_id}")
     builder.adjust(1)
     return builder.as_markup()
 

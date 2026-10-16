@@ -15,7 +15,7 @@ from aiogram.filters import Command
 import logging
 import html
 
-from database import db
+from database import db, AUTO_CATEGORY
 from config import ADMIN_IDS, CHANNEL_ID
 from bson import ObjectId
 from keyboards.inline import (
@@ -34,6 +34,8 @@ from keyboards.inline import (
     back_to_cats_kb,
     upload_cat_kb,
     upload_batch_kb,
+    album_actions_kb,
+    move_album_cat_kb,
 )
 from utils.formatters import get_admin_panel_text, split_caption
 from utils.converter import normalize_myanmar
@@ -334,6 +336,46 @@ async def confirm_delete_album(callback: CallbackQuery):
             parse_mode="HTML",
             reply_markup=admin_main_kb(),
         )
+
+
+@router.callback_query(F.data.startswith("move_album:"))
+async def move_album_pick(callback: CallbackQuery):
+    if not await is_admin(callback.from_user.id):
+        await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
+        return
+    album_id = ObjectId(callback.data.split(":")[1])
+    cats = await db.get_categories()
+    if not cats:
+        await callback.answer("⚠️ အမျိုးအစား မရှိသေးပါ!")
+        return
+    await callback.message.edit_text(
+        "📂 <b>ဤအယ်လ်ဘမ်ကို မည်သည့် အမျိုးအစားသို့ ရွှေ့မည်လဲ?</b>",
+        parse_mode="HTML",
+        reply_markup=move_album_cat_kb(album_id, cats),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("movecat:"))
+async def move_album_to_cat(callback: CallbackQuery):
+    if not await is_admin(callback.from_user.id):
+        await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
+        return
+    _, album_s, cat_s = callback.data.split(":")
+    album_id = ObjectId(album_s)
+    cat_id = ObjectId(cat_s)
+    await db.update_album(album_id, category_id=cat_id)
+    album = await db.get_album(album_id)
+    cat = await db.get_category(cat_id)
+    album_name = album["name"] if album else ""
+    cat_name = cat["name"] if cat else ""
+    await callback.message.edit_text(
+        f"✅ <b>{html.escape(album_name)}</b>\n"
+        f"📂 <b>{html.escape(cat_name)}</b> အမျိုးအစားသို့ ရွှေ့ပြီးပါပြီ!",
+        parse_mode="HTML",
+        reply_markup=album_actions_kb(album_id, True),
+    )
+    await callback.answer("✅ ရွှေ့ပြီးပါပြီ!")
 
 
 @router.callback_query(F.data.startswith("del_song:"))
@@ -658,9 +700,18 @@ async def _apply_finish_upload(reply_target, state: FSMContext) -> bool:
     data = await state.get_data()
     batch = await db.get_pending_upload(user_id) or {}
     pending = batch.get("pending_songs") or data.get("pending_songs") or []
-    cat_id = data.get("cat_id") or batch.get("cat_id")
+    raw_cat_id = data.get("cat_id") or batch.get("cat_id")
     cover = (data.get("cover") or batch.get("cover") or "").strip()
     batch_album_name = data.get("album_name", "") or batch.get("album_name", "") or ""
+
+    # Never leave an album without a category (that makes it invisible in the
+    # category browser) — fall back to the auto-save category.
+    auto_cat = await db.get_or_create_category(AUTO_CATEGORY)
+    auto_cat_id = auto_cat["_id"] if auto_cat else None
+    cat_id = raw_cat_id or auto_cat_id
+    # Only an explicitly chosen real category should move an existing album;
+    # the auto bucket never steals albums from their category.
+    move_category = raw_cat_id is not None and raw_cat_id != auto_cat_id
 
     artists_used = {}
     albums_used = {}
@@ -682,6 +733,7 @@ async def _apply_finish_upload(reply_target, state: FSMContext) -> bool:
             category_id=cat_id,
             cover=cover,
             artist_id=artist["_id"],
+            move_category=move_category,
         )
         if album_name not in artists_used:
             artists_used[album_name] = artist_name
@@ -805,7 +857,12 @@ async def auto_save_forwarded(message: Message, state: FSMContext):
     # new batch so the same acceptance (sequential № + buttons + /done) applies.
     pending = await _load_pending_batch(message.from_user.id)
     if not pending:
-        await db.save_pending_upload(message.from_user.id, album_name="")
+        auto_cat = await db.get_or_create_category(AUTO_CATEGORY)
+        await db.save_pending_upload(
+            message.from_user.id,
+            album_name="",
+            cat_id=auto_cat["_id"] if auto_cat else None,
+        )
         pending = await _load_pending_batch(message.from_user.id)
     try:
         await _resume_pending_upload(message, state, pending)

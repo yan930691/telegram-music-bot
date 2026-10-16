@@ -10,6 +10,10 @@ DEFAULT_CATEGORIES = [
     "အခြား",
 ]
 
+# Albums saved without an explicit category (channel auto-save, forwards) live
+# here so they are never invisible in the category browser.
+AUTO_CATEGORY = "အလိုအလျောက်"
+
 
 class Database:
     def __init__(self):
@@ -45,6 +49,31 @@ class Database:
 
     async def get_category(self, cat_id):
         return await self.db.categories.find_one({"_id": cat_id})
+
+    async def get_or_create_category(self, name, description=""):
+        name = (name or "").strip()
+        if not name:
+            return None
+        cat = await self.db.categories.find_one({"name": name})
+        if cat:
+            return cat
+        res = await self.db.categories.insert_one(
+            {"name": name, "description": description}
+        )
+        return await self.db.categories.find_one({"_id": res.inserted_id})
+
+    async def backfill_album_categories(self, category_id, valid_category_ids=None):
+        """Reassign every album that has no category (or points at a deleted one)
+        so it always shows up in the category browser. Returns how many moved."""
+        if valid_category_ids:
+            query = {"category_id": {"$nin": list(valid_category_ids)}}
+        else:
+            query = {"category_id": None}
+        res = await self.db.albums.update_many(
+            query,
+            {"$set": {"category_id": category_id}},
+        )
+        return res.modified_count
 
     async def add_category(self, name, description=""):
         return await self.db.categories.insert_one(
@@ -110,21 +139,41 @@ class Database:
             }
         )
 
-    async def get_or_create_album(self, name, artist="", category_id=None, cover="", artist_id=None):
+    async def get_or_create_album(self, name, artist="", category_id=None, cover="", artist_id=None, move_category=False):
+        # Prefer an album with the same name inside the requested category.
+        if category_id is not None:
+            album = await self.db.albums.find_one(
+                {"name": name, "category_id": category_id}
+            )
+            if album:
+                return await self._fill_album(album, artist, category_id, artist_id)
+        album = None
         if artist_id:
             album = await self.db.albums.find_one({"name": name, "artist_id": artist_id})
-            if album:
-                return album
-        album = await self.db.albums.find_one({"name": name})
-        if album:
-            if artist_id and (not album.get("artist_id") or not album.get("artist")):
-                await self.db.albums.update_one(
-                    {"_id": album["_id"]},
-                    {"$set": {"artist_id": artist_id, "artist": artist or album.get("artist", "")}},
-                )
-            return album
+        if album is None:
+            album = await self.db.albums.find_one({"name": name})
+        if album is not None:
+            return await self._fill_album(album, artist, category_id, artist_id, move_category)
         res = await self.add_album(name, artist, category_id, cover, artist_id)
         return await self.db.albums.find_one({"_id": res.inserted_id})
+
+    async def _fill_album(self, album, artist="", category_id=None, artist_id=None, move_category=False):
+        """Top up missing fields on an existing album. If the album had no
+        category it is adopted into the chosen one; with ``move_category`` an
+        explicitly chosen category wins (so uploads always land where the admin
+        expects instead of being silently reused under an old category)."""
+        updates = {}
+        if artist_id and (not album.get("artist_id") or not album.get("artist")):
+            updates["artist_id"] = artist_id
+            updates["artist"] = artist or album.get("artist", "")
+        elif artist and not album.get("artist"):
+            updates["artist"] = artist
+        if category_id is not None and (not album.get("category_id") or move_category):
+            updates["category_id"] = category_id
+        if updates:
+            await self.db.albums.update_one({"_id": album["_id"]}, {"$set": updates})
+            album.update(updates)
+        return album
 
     async def update_album(self, album_id, **kwargs):
         await self.db.albums.update_one({"_id": album_id}, {"$set": kwargs})

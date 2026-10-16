@@ -10,7 +10,7 @@ from aiohttp import web
 import aiohttp
 
 from config import BOT_TOKEN, ADMIN_IDS, MONGODB_URI, BUILD_VERSION
-from database import db
+from database import db, AUTO_CATEGORY
 
 # Import routers
 from handlers import start, music, search, admin, channel
@@ -113,6 +113,16 @@ async def main():
     added = await db.seed_default_categories()
     if added:
         logging.info("Seeded default categories: %s", ", ".join(added))
+
+    # Make sure albums saved without a category (channel auto-save, forwards) or
+    # pointing at a deleted category are visible in the category browser.
+    auto_cat = await db.get_or_create_category(AUTO_CATEGORY)
+    if auto_cat:
+        cats = await db.get_categories()
+        valid_ids = [c["_id"] for c in cats]
+        moved = await db.backfill_album_categories(auto_cat["_id"], valid_ids)
+        if moved:
+            logging.info("Moved %s album(s) into '%s'", moved, AUTO_CATEGORY)
 
     asyncio.create_task(_keepalive_loop())
 

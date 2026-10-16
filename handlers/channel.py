@@ -3,7 +3,7 @@ import logging
 from aiogram import Router, F
 from aiogram.types import Message
 
-from database import db
+from database import db, AUTO_CATEGORY
 from config import CHANNEL_ID
 from utils.formatters import split_caption
 from utils.converter import normalize_myanmar
@@ -99,10 +99,11 @@ async def on_channel_audio(message: Message):
             return
 
         artist = await db.get_or_create_artist(artist_name or "အမည်မသိ")
+        auto_cat = await db.get_or_create_category(AUTO_CATEGORY)
         album = await db.get_or_create_album(
             album_name,
             artist=artist["name"],
-            category_id=None,
+            category_id=auto_cat["_id"] if auto_cat else None,
             artist_id=artist["_id"],
         )
         await db.add_song(
