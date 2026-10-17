@@ -113,11 +113,28 @@ async def backfill_translate_command(message: Message):
 _bg_tasks = set()
 
 
+async def _resolve_channel_peer(app, chat):
+    """Resolve a channel to an id Pyrogram can use.
+
+    ``get_dialogs``/``get_chat_history`` are users-only, so a bot can only
+    resolve a channel from its @username or from a peer it has already seen in
+    an update. A bare numeric id for a private channel cannot be resolved
+    without a cached access_hash.
+    """
+    try:
+        return (await app.get_chat(chat)).id
+    except Exception as e:
+        logging.warning("Pyrogram get_chat(%s) failed: %s", chat, e)
+    return chat
+
+
 async def _enumerate_channel_audio_ids():
     """List channel message ids that are audio, using MTProto (Pyrogram).
 
-    The Bot API cannot read old channel history, so we use a bot session via
-    MTProto only to *enumerate* message ids.
+    The Bot API cannot read old channel history, and ``get_chat_history`` is
+    users-only (``BOT_METHOD_INVALID`` for bots). ``channels.getMessages`` is
+    bot-callable when explicit ids are given, so we probe id ranges in batches
+    and keep the audio ones.
     """
     from pyrogram import Client
 
@@ -132,17 +149,33 @@ async def _enumerate_channel_audio_ids():
         in_memory=True,
     )
     async with app:
-        me = await app.get_me()
-        async for m in app.get_chat_history(chat):
-            if getattr(m, "from_user", None) and m.from_user.id == me.id:
-                continue
-            is_audio = bool(getattr(m, "audio", None))
-            if not is_audio:
-                doc = getattr(m, "document", None)
-                if doc and "audio" in (getattr(doc, "mime_type", "") or ""):
-                    is_audio = True
-            if is_audio:
-                ids.append(m.id)
+        resolved = await _resolve_channel_peer(app, chat)
+        batch = 200
+        start = 1
+        empty_streak = 0
+        # Safety cap: stop after ~1,000,000 ids or 5 consecutive empty batches
+        # (~1000 missing ids) so deleted gaps near the tail don't truncate us.
+        while start <= 1_000_000:
+            chunk = list(range(start, start + batch))
+            msgs = await app.get_messages(resolved, message_ids=chunk)
+            if not isinstance(msgs, list):
+                msgs = [msgs]
+            found = False
+            for m in msgs:
+                if m is None or getattr(m, "empty", False):
+                    continue
+                found = True
+                is_audio = bool(getattr(m, "audio", None))
+                if not is_audio:
+                    doc = getattr(m, "document", None)
+                    if doc and "audio" in (getattr(doc, "mime_type", "") or ""):
+                        is_audio = True
+                if is_audio:
+                    ids.append(m.id)
+            empty_streak = 0 if found else empty_streak + 1
+            start += batch
+            if empty_streak >= 5:
+                break
     return ids
 
 
@@ -153,8 +186,11 @@ async def _run_channel_import(bot, status_msg, lang, admin_chat_id):
         ids = await _enumerate_channel_audio_ids()
     except Exception as e:
         logging.exception("Channel enumeration failed")
+        msg = str(e)
+        if "Peer id invalid" in msg or "PEER_ID_INVALID" in msg:
+            msg += "\n\n" + t("a_imp_peer_hint", lang)
         try:
-            await status_msg.edit_text(t("a_imp_failed", lang, err=html.escape(str(e))))
+            await status_msg.edit_text(t("a_imp_failed", lang, err=html.escape(msg)))
         except Exception:
             pass
         return
