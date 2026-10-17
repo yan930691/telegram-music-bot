@@ -1,3 +1,4 @@
+import re
 from aiogram import Router, F
 from aiogram.types import (
     CallbackQuery,
@@ -54,6 +55,7 @@ class AdminStates(StatesGroup):
     adding_songs = State()
     upload_cat = State()
     upload_music = State()
+    imp_wait_forward = State()
 
 
 async def is_admin(user_id) -> bool:
@@ -208,12 +210,22 @@ async def _run_channel_import(bot, status_msg, lang, admin_chat_id):
         logging.exception("Channel enumeration failed")
         msg = str(e)
         if "Peer id invalid" in msg or "PEER_ID_INVALID" in msg:
-            msg += "\n\n" + t("a_imp_peer_hint", lang)
-        try:
-            await status_msg.edit_text(t("a_imp_failed", lang, err=html.escape(msg)))
-        except Exception:
-            pass
-        return
+            try:
+                await status_msg.edit_text(t("a_imp_need_forward", lang), parse_mode="HTML")
+            except Exception:
+                pass
+            # Prompt admin to forward a channel message
+            try:
+                await message.bot.send_message(
+                    admin_chat_id, t("a_imp_need_forward", lang), parse_mode="HTML"
+                )
+            except Exception:
+                pass
+            try:
+                await state.set_state(AdminStates.imp_wait_forward)
+            except Exception:
+                pass
+            return
 
     total = len(ids)
     added = replaced = skipped = 0
@@ -1294,3 +1306,23 @@ async def cancel_batch(callback: CallbackQuery, state: FSMContext):
         reply_markup=admin_main_kb(lang),
     )
     await callback.answer()
+
+
+@router.message(StateFilter(AdminStates.imp_wait_forward), F.forward_from_chat)
+async def imp_got_forward(message: Message, state: FSMContext):
+    lang = await get_lang(message.from_user.id)
+    fch = message.forward_from_chat
+    if fch and str(fch.id) == str(CHANNEL_ID):
+        try:
+            await state.clear()
+        except Exception:
+            pass
+        await message.answer(t("a_imp_forward_ok", lang), parse_mode="HTML")
+        return
+    await message.answer(t("a_imp_need_forward", lang), parse_mode="HTML")
+
+
+@router.message(StateFilter(AdminStates.imp_wait_forward))
+async def imp_wait_hint(message: Message, state: FSMContext):
+    lang = await get_lang(message.from_user.id)
+    await message.answer(t("a_imp_need_forward", lang), parse_mode="HTML")
