@@ -211,18 +211,7 @@ async def _run_channel_import(bot, status_msg, lang, admin_chat_id):
         msg = str(e)
         if "Peer id invalid" in msg or "PEER_ID_INVALID" in msg:
             try:
-                await status_msg.edit_text(t("a_imp_need_forward", lang), parse_mode="HTML")
-            except Exception:
-                pass
-            # Prompt admin to forward a channel message
-            try:
-                await message.bot.send_message(
-                    admin_chat_id, t("a_imp_need_forward", lang), parse_mode="HTML"
-                )
-            except Exception:
-                pass
-            try:
-                await state.set_state(AdminStates.imp_wait_forward)
+                await status_msg.edit_text(t("a_imp_need_post", lang), parse_mode="HTML")
             except Exception:
                 pass
             return
@@ -1325,4 +1314,4 @@ async def imp_got_forward(message: Message, state: FSMContext):
 @router.message(StateFilter(AdminStates.imp_wait_forward))
 async def imp_wait_hint(message: Message, state: FSMContext):
     lang = await get_lang(message.from_user.id)
-    await message.answer(t("a_imp_need_forward", lang), parse_mode="HTML")
+    await message.answer(t("a_imp_need_post", lang), parse_mode="HTML")
