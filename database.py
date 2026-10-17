@@ -229,6 +229,42 @@ class Database:
     async def update_song(self, song_id, **kwargs):
         await self.db.songs.update_one({"_id": song_id}, {"$set": kwargs})
 
+    async def save_song_dedup(
+        self, title, album_id, file_id, file_size=0, duration=0,
+        artist_id=None, track_no=None,
+    ):
+        """Insert a song with quality-aware duplicate handling.
+
+        - Exact ``file_id`` already present  -> ("skipped", song)
+        - Same title+artist exists but the new file is bigger -> replace the
+          stored file (same document, keeps downloads/history) -> ("replaced", song)
+        - Same title+artist exists and is equal/better -> ("skipped", song)
+        - Otherwise insert -> ("added", song)
+        """
+        existing_file = await self.db.songs.find_one({"file_id": file_id})
+        if existing_file:
+            return "skipped", existing_file
+
+        q = {"title": title}
+        if artist_id is not None:
+            q["artist_id"] = artist_id
+        existing = await self.db.songs.find_one(q)
+        if existing:
+            if file_size and file_size > (existing.get("file_size") or 0):
+                update = {"file_id": file_id, "file_size": file_size}
+                if duration:
+                    update["duration"] = duration
+                await self.update_song(existing["_id"], **update)
+                existing.update(update)
+                return "replaced", existing
+            return "skipped", existing
+
+        res = await self.add_song(
+            title, album_id, file_id, file_size, duration,
+            artist_id=artist_id, track_no=track_no,
+        )
+        return "added", await self.db.songs.find_one({"_id": res.inserted_id})
+
     async def get_latest_songs(self, limit=10):
         return (
             await self.db.songs.find()
@@ -248,9 +284,92 @@ class Database:
 
     # ---------------- Search ----------------
     async def search_songs(self, query):
-        # Case-insensitive regex search
+        # Legacy title-only search (kept for compatibility).
         regex = {"$regex": query, "$options": "i"}
         return await self.db.songs.find({"$or": [{"title": regex}]}).to_list(length=20)
+
+    @staticmethod
+    def _fuzzy_regex(query):
+        """Build a regex that requires ALL whitespace-separated tokens to
+        appear (in any order) in the target field. Works well for both
+        English and single-token Myanmar queries."""
+        import re as _re
+
+        tokens = [tok for tok in (query or "").split() if tok]
+        if not tokens:
+            return None
+        pattern = "".join(f"(?=.*{_re.escape(tok)})" for tok in tokens) + ".*"
+        return {"$regex": pattern, "$options": "i"}
+
+    async def search_songs_page(self, query, page=1, per_page=8):
+        """Fuzzy, artist/album-aware search with relevance ranking.
+
+        Returns (songs, total). Songs are enriched with ``artist_name`` and
+        ``album_name`` so callers don't need extra lookups.
+        """
+        rx = self._fuzzy_regex(query)
+        if rx is None:
+            return [], 0
+        page = max(1, int(page or 1))
+        per_page = max(1, int(per_page or 8))
+
+        base_match = {
+            "$or": [{"title": rx}, {"artist_name": rx}, {"album_name": rx}]
+        }
+        pipeline = [
+            {"$lookup": {"from": "artists", "localField": "artist_id",
+                         "foreignField": "_id", "as": "_artist"}},
+            {"$lookup": {"from": "albums", "localField": "album_id",
+                         "foreignField": "_id", "as": "_album"}},
+            {"$addFields": {
+                "artist_name": {"$ifNull": [{"$arrayElemAt": ["$_artist.name", 0]}, ""]},
+                "album_name": {"$ifNull": [{"$arrayElemAt": ["$_album.name", 0]}, ""]},
+            }},
+            {"$match": base_match},
+        ]
+
+        # Total count for pagination.
+        count_pipe = pipeline + [{"$count": "n"}]
+        count_res = await self.db.songs.aggregate(count_pipe).to_list(length=1)
+        total = count_res[0]["n"] if count_res else 0
+        if total == 0:
+            return [], 0
+
+        # Relevance: title contains query > title matches tokens > else.
+        first = (query or "").strip().split()[0] if (query or "").strip() else ""
+        title_any = {"$cond": [
+            {"$regexMatch": {"input": {"$ifNull": ["$title", ""]},
+                             "regex": rx["$regex"], "options": "i"}}, 1, 0]}
+        if first:
+            score_expr = {"$add": [
+                {"$cond": [
+                    {"$regexMatch": {"input": {"$ifNull": ["$title", ""]},
+                                     "regex": first, "options": "i"}}, 2, 0]},
+                title_any,
+            ]}
+        else:
+            score_expr = title_any
+
+        pipeline += [
+            {"$addFields": {"_score": score_expr}},
+            {"$sort": {"_score": -1, "downloads": -1, "created_at": -1}},
+            {"$skip": (page - 1) * per_page},
+            {"$limit": per_page},
+        ]
+        songs = await self.db.songs.aggregate(pipeline).to_list(length=per_page)
+        return songs, total
+
+    async def find_song_by_file_id(self, file_id):
+        return await self.db.songs.find_one({"file_id": file_id})
+
+    async def find_song_by_title_artist(self, title, artist_id=None, artist_name=None):
+        """Find an existing song by exact title + artist (for duplicate check)."""
+        q = {"title": title}
+        if artist_id is not None:
+            q["artist_id"] = artist_id
+        elif artist_name:
+            q["artist_name"] = artist_name
+        return await self.db.songs.find_one(q)
 
     # ---------------- Users ----------------
     async def add_user(self, user_id, username, first_name):

@@ -2,10 +2,6 @@ from aiogram import Router, F
 from aiogram.types import (
     CallbackQuery,
     Message,
-    InlineKeyboardMarkup,
-    InlineQuery,
-    InlineQueryResultArticle,
-    InputTextMessageContent,
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.fsm.context import FSMContext
@@ -40,6 +36,7 @@ from keyboards.inline import (
 from utils.formatters import get_admin_panel_text, split_caption
 from utils.converter import normalize_myanmar
 from utils.metadata import read_audio_metadata, pick_song_title, extract_track_no
+from utils.i18n import t, get_lang
 
 router = Router()
 admin_router = router  # all callbacks gated by is_admin check
@@ -65,12 +62,13 @@ async def is_admin(user_id) -> bool:
 async def done_command(message: Message, state: FSMContext):
     if not await is_admin(message.from_user.id):
         return
+    lang = await get_lang(message.from_user.id)
     current = await state.get_state()
     if current == AdminStates.upload_music.state:
         data = await state.get_data()
         pending = await _load_pending_batch(message.from_user.id)
         if not pending and not (data.get("pending_songs") or []):
-            await message.answer("⚠️ သီချင်း မပို့ရသေးပါ!")
+            await message.answer(t("a_nothing_pending", lang))
             return
         await _apply_finish_upload(message, state)
     elif current == AdminStates.adding_songs.state:
@@ -80,99 +78,69 @@ async def done_command(message: Message, state: FSMContext):
         if pending:
             await _apply_finish_upload(message, state)
         else:
-            await message.answer("ℹ️ လက်ရှိ တင်နေသည့် flow မရှိပါ။")
+            await message.answer(t("a_no_flow", lang))
 
 
 # ---------------- Admin menu ----------------
 @router.callback_query(F.data == "admin_menu")
 async def admin_menu(callback: CallbackQuery):
+    lang = await get_lang(callback.from_user.id)
     if not await is_admin(callback.from_user.id):
-        await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
+        await callback.answer(t("not_admin", lang))
         return
-    current = callback.message
-    await current.edit_text(get_admin_panel_text(), parse_mode="HTML", reply_markup=admin_main_kb())
+    await callback.message.edit_text(
+        get_admin_panel_text(lang), parse_mode="HTML", reply_markup=admin_main_kb(lang)
+    )
     await callback.answer()
-
-
-# ---------------- Admin Inline Mode (@bot username) ----------------
-@router.inline_query()
-async def admin_inline_menu(query: InlineQuery):
-    # Only admins get results; everyone else sees "no results".
-    if not await is_admin(query.from_user.id):
-        await query.answer([], is_personal=True, cache_time=60)
-        return
-    items = [
-        ("admin_add_cat", "➕ အမျိုးအစား ထည့်", "အမျိုးအစားအသစ် ထပ်ထည့်ရန်", "category"),
-        ("admin_upload", "⬆️ Album + သီချင်းတင်ရန်", "Album အသစ်နှင့် သီချင်းများ တင်ရန်", "upload album"),
-        ("admin_add_song", "🎵 အယ်လ်ဘမ်ထဲ သီချင်းထည့်", "ရှိပြီးသား Album ထဲ သီချင်းထည့်ရန်", "song add"),
-        ("admin_stats", "📊 စာရင်းဇယား", "စာရင်းဇယား ကြည့်ရန်", "stats"),
-        ("admin_delete_menu", "🗑 ဖျက်ရန်", "သီချင်း / Album / အမျိုးအစား ဖျက်ရန်", "delete"),
-    ]
-    q = (query.query or "").strip().lower()
-    results = []
-    for i, (action, title, desc, kw) in enumerate(items, 1):
-        hay = f"{title.lower()} {desc.lower()} {kw.lower()}"
-        if q and q not in hay:
-            continue
-        results.append(
-            InlineQueryResultArticle(
-                id=f"admin_{action}",
-                title=title,
-                description=desc,
-                input_message_content=InputTextMessageContent(
-                    message_text=get_admin_panel_text(),
-                    parse_mode="HTML",
-                ),
-                reply_markup=admin_main_kb(),
-            )
-        )
-    await query.answer(results, is_personal=True, cache_time=0)
 
 
 @router.callback_query(F.data == "admin_add_cat")
 async def admin_add_cat(callback: CallbackQuery, state: FSMContext):
+    lang = await get_lang(callback.from_user.id)
     if not await is_admin(callback.from_user.id):
-        await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
+        await callback.answer(t("not_admin", lang))
         return
     await state.set_state(AdminStates.waiting_cat_name)
-    await callback.message.answer("➕ <b>အမျိုးအစား အမည် ရိုက်ထည့်ပါ:</b>", parse_mode="HTML")
+    await callback.message.answer(t("a_add_cat_prompt", lang), parse_mode="HTML")
     await callback.answer()
 
 
 @router.callback_query(F.data == "admin_add_album")
 async def admin_add_album(callback: CallbackQuery, state: FSMContext):
+    lang = await get_lang(callback.from_user.id)
     if not await is_admin(callback.from_user.id):
-        await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
+        await callback.answer(t("not_admin", lang))
         return
     cats = await db.get_categories()
     if not cats:
-        await callback.answer("⚠️ ဦးစွာ အမျိုးအစားတစ်ခု ထည့်ပါ!")
+        await callback.answer(t("a_add_cat_empty", lang))
         return
     await state.set_state(AdminStates.waiting_album_cat)
     await callback.message.answer(
-        "📀 <b>အယ်လ်ဘမ် ထည့်မည့် အမျိုးအစား ရွေးပါ:</b>",
+        t("a_choose_album_cat", lang),
         parse_mode="HTML",
-        reply_markup=album_add_cat_kb(cats),
+        reply_markup=album_add_cat_kb(cats, lang),
     )
     await callback.answer()
 
 
 @router.callback_query(F.data == "admin_add_song")
 async def admin_add_song(callback: CallbackQuery):
+    lang = await get_lang(callback.from_user.id)
     if not await is_admin(callback.from_user.id):
-        await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
+        await callback.answer(t("not_admin", lang))
         return
     cats = await db.get_categories()
     if not cats:
-        await callback.answer("⚠️ အရင်ဆုံး အမျိုးအစားတစ်ခု ထည့်ပါ!")
+        await callback.answer(t("a_add_song_first_cat", lang))
         return
     builder = InlineKeyboardBuilder()
     for cat in cats:
         builder.button(text=f"🎵 {cat['name']}", callback_data=f"addsong_cat:{cat['_id']}")
-    builder.button(text="🔙 နောက်သို့", callback_data="admin_menu")
+    builder.button(text=t("back", lang), callback_data="admin_menu")
     builder.adjust(1)
     await callback.message.edit_text(
-        "🎵 <b>သီချင်းထည့်မည့် အမျိုးအစား ရွေးပါ:</b>",
+        t("a_choose_song_cat", lang),
         parse_mode="HTML",
         reply_markup=builder.as_markup(),
     )
@@ -181,21 +149,22 @@ async def admin_add_song(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("addsong_cat:"))
 async def addsong_cat(callback: CallbackQuery):
+    lang = await get_lang(callback.from_user.id)
     if not await is_admin(callback.from_user.id):
-        await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
+        await callback.answer(t("not_admin", lang))
         return
     cat_id = ObjectId(callback.data.split(":")[1])
     albums = await db.get_albums(cat_id)
     if not albums:
-        await callback.answer("⚠️ ဤအမျိုးအစားတွင် အယ်လ်ဘမ် မရှိပါ!")
+        await callback.answer(t("a_no_album_in_cat", lang))
         return
     builder = InlineKeyboardBuilder()
     for album in albums:
         builder.button(text=f"📀 {album['name']}", callback_data=f"addsong_album:{album['_id']}")
-    builder.button(text="🔙 နောက်သို့", callback_data="admin_add_song")
+    builder.button(text=t("back", lang), callback_data="admin_add_song")
     builder.adjust(1)
     await callback.message.edit_text(
-        "📀 <b>သီချင်းထည့်မည့် အယ်လ်ဘမ် ရွေးပါ:</b>",
+        t("a_choose_song_album", lang),
         parse_mode="HTML",
         reply_markup=builder.as_markup(),
     )
@@ -204,117 +173,125 @@ async def addsong_cat(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("addsong_album:"))
 async def addsong_album(callback: CallbackQuery, state: FSMContext):
+    lang = await get_lang(callback.from_user.id)
     if not await is_admin(callback.from_user.id):
-        await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
+        await callback.answer(t("not_admin", lang))
         return
     album_id = ObjectId(callback.data.split(":")[1])
-    await _begin_song_batch(callback.message, state, album_id)
+    await _begin_song_batch(callback.message, state, album_id, lang)
     await callback.answer()
 
 
 @router.callback_query(F.data == "admin_stats")
 async def admin_stats(callback: CallbackQuery):
+    lang = await get_lang(callback.from_user.id)
     if not await is_admin(callback.from_user.id):
-        await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
+        await callback.answer(t("not_admin", lang))
         return
     stats = await db.get_stats()
     text = (
-        "📊 <b>စာရင်းဇယား:</b>\n\n"
-        f"🎵 သီချင်းများ: <b>{stats['songs']}</b>\n"
-        f"📀 အယ်လ်ဘမ်များ: <b>{stats['albums']}</b>\n"
-        f"👥 အသုံးပြုသူများ: <b>{stats['users']}</b>"
+        t("stats_header", lang) + "\n\n"
+        + t("stats_songs", lang, n=stats["songs"]) + "\n"
+        + t("stats_albums", lang, n=stats["albums"]) + "\n"
+        + t("stats_users", lang, n=stats["users"])
     )
-    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=back_to_cats_kb())
+    await callback.message.edit_text(
+        text, parse_mode="HTML", reply_markup=back_to_cats_kb(lang)
+    )
     await callback.answer()
 
 
 @router.callback_query(F.data == "admin_delete_menu")
 async def admin_delete_menu(callback: CallbackQuery):
+    lang = await get_lang(callback.from_user.id)
     if not await is_admin(callback.from_user.id):
-        await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
+        await callback.answer(t("not_admin", lang))
         return
     await callback.message.edit_text(
-        "🗑 <b>ဖျက်လိုသည့် အမျိုးအစား ရွေးပါ:</b>",
+        t("a_delete_choose", lang),
         parse_mode="HTML",
-        reply_markup=admin_delete_choice_kb(),
+        reply_markup=admin_delete_choice_kb(lang),
     )
     await callback.answer()
 
 
 @router.callback_query(F.data == "del_pick_cat")
 async def delete_cat_pick(callback: CallbackQuery):
+    lang = await get_lang(callback.from_user.id)
     if not await is_admin(callback.from_user.id):
-        await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
+        await callback.answer(t("not_admin", lang))
         return
     cats = await db.get_categories()
     if not cats:
-        await callback.answer("⚠️ ဖျက်ရန် အမျိုးအစား မရှိပါ!")
+        await callback.answer(t("a_del_no_cat", lang))
         return
     await callback.message.edit_text(
-        "🗑 <b>ဖျက်မည့် အမျိုးအစား ရွေးပါ:</b>",
+        t("a_del_choose_cat", lang),
         parse_mode="HTML",
-        reply_markup=admin_delete_menu_kb(cats),
+        reply_markup=admin_delete_menu_kb(cats, lang),
     )
     await callback.answer()
 
 
 @router.callback_query(F.data == "del_pick_album")
 async def delete_album_pick(callback: CallbackQuery):
+    lang = await get_lang(callback.from_user.id)
     if not await is_admin(callback.from_user.id):
-        await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
+        await callback.answer(t("not_admin", lang))
         return
     albums = await db.get_all_albums()
     if not albums:
-        await callback.answer("⚠️ ဖျက်ရန် Album မရှိပါ!")
+        await callback.answer(t("a_del_no_album", lang))
         return
     await callback.message.edit_text(
-        "🗑 <b>ဖျက်မည့် Album ရွေးပါ:</b>\n\n"
-        f"(Album ဖျက်လျှင် ထဲမှ သီချင်းများလည်း ပါ ဖျက်ပါမည်)",
+        t("a_del_choose_album", lang),
         parse_mode="HTML",
-        reply_markup=admin_album_delete_kb(albums),
+        reply_markup=admin_album_delete_kb(albums, lang),
     )
     await callback.answer()
 
 
 @router.callback_query(F.data == "del_pick_song")
 async def delete_song_pick(callback: CallbackQuery):
+    lang = await get_lang(callback.from_user.id)
     if not await is_admin(callback.from_user.id):
-        await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
+        await callback.answer(t("not_admin", lang))
         return
     songs = await db.get_all_songs()
     if not songs:
-        await callback.answer("⚠️ ဖျက်ရန် သီချင်း မရှိပါ!")
+        await callback.answer(t("a_del_no_song", lang))
         return
     await callback.message.edit_text(
-        "🗑 <b>ဖျက်မည့် သီချင်း ရွေးပါ:</b>",
+        t("a_del_choose_song", lang),
         parse_mode="HTML",
-        reply_markup=admin_song_delete_kb(songs),
+        reply_markup=admin_song_delete_kb(songs, lang),
     )
     await callback.answer()
 
 
 @router.callback_query(F.data.startswith("del_album:"))
 async def delete_album_confirm(callback: CallbackQuery):
+    lang = await get_lang(callback.from_user.id)
     if not await is_admin(callback.from_user.id):
-        await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
+        await callback.answer(t("not_admin", lang))
         return
     album_id = ObjectId(callback.data.split(":")[1])
     album = await db.get_album(album_id)
     count = await db.db.songs.count_documents({"album_id": album_id})
     album_name = album["name"] if album else ""
     await callback.message.edit_text(
-        f"⚠️ <b>{html.escape(album_name)}</b> ကို ဖျက်မည်လား?\n\n"
-        f"ထဲမှ သီချင်း <b>{count}</b> ပုဒ်လည်း ပါ ဖျက်ပါမည်။",
+        t("a_del_album_confirm", lang, name=html.escape(album_name), n=count),
         parse_mode="HTML",
-        reply_markup=admin_confirm_delete_kb(f"del_album:{album_id}", "del_pick_album"),
+        reply_markup=admin_confirm_delete_kb(f"del_album:{album_id}", "del_pick_album", lang),
     )
     await callback.answer()
 
 
 @router.callback_query(F.data.startswith("confirm_del_album:"))
 async def confirm_delete_album(callback: CallbackQuery):
+    lang = await get_lang(callback.from_user.id)
     if not await is_admin(callback.from_user.id):
-        await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
+        await callback.answer(t("not_admin", lang))
         return
     album_id = ObjectId(callback.data.split(":")[1])
     album = await db.get_album(album_id)
@@ -322,44 +299,46 @@ async def confirm_delete_album(callback: CallbackQuery):
     await db.delete_album(album_id)
     if artist_id:
         await db.delete_artist_if_empty(artist_id)
-    await callback.answer("🗑 Album ဖျက်ပြီးပါပြီ!")
+    await callback.answer(t("a_del_album_done", lang))
     albums = await db.get_all_albums()
     if albums:
         await callback.message.edit_text(
-            "🗑 <b>ဖျက်မည့် Album ရွေးပါ:</b>",
+            t("a_del_choose_album", lang),
             parse_mode="HTML",
-            reply_markup=admin_album_delete_kb(albums),
+            reply_markup=admin_album_delete_kb(albums, lang),
         )
     else:
         await callback.message.edit_text(
-            "✅ <b>ဖျက်ပြီးပါပြီ!</b>\n\nAlbum မကျန်တော့ပါ။",
+            t("a_done_all", lang, what=t("a_what_albums", lang)),
             parse_mode="HTML",
-            reply_markup=admin_main_kb(),
+            reply_markup=admin_main_kb(lang),
         )
 
 
 @router.callback_query(F.data.startswith("move_album:"))
 async def move_album_pick(callback: CallbackQuery):
+    lang = await get_lang(callback.from_user.id)
     if not await is_admin(callback.from_user.id):
-        await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
+        await callback.answer(t("not_admin", lang))
         return
     album_id = ObjectId(callback.data.split(":")[1])
     cats = await db.get_categories()
     if not cats:
-        await callback.answer("⚠️ အမျိုးအစား မရှိသေးပါ!")
+        await callback.answer(t("a_move_no_cat", lang))
         return
     await callback.message.edit_text(
-        "📂 <b>ဤအယ်လ်ဘမ်ကို မည်သည့် အမျိုးအစားသို့ ရွှေ့မည်လဲ?</b>",
+        t("a_move_pick", lang),
         parse_mode="HTML",
-        reply_markup=move_album_cat_kb(album_id, cats),
+        reply_markup=move_album_cat_kb(album_id, cats, lang),
     )
     await callback.answer()
 
 
 @router.callback_query(F.data.startswith("movecat:"))
 async def move_album_to_cat(callback: CallbackQuery):
+    lang = await get_lang(callback.from_user.id)
     if not await is_admin(callback.from_user.id):
-        await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
+        await callback.answer(t("not_admin", lang))
         return
     _, album_s, cat_s = callback.data.split(":")
     album_id = ObjectId(album_s)
@@ -370,76 +349,77 @@ async def move_album_to_cat(callback: CallbackQuery):
     album_name = album["name"] if album else ""
     cat_name = cat["name"] if cat else ""
     await callback.message.edit_text(
-        f"✅ <b>{html.escape(album_name)}</b>\n"
-        f"📂 <b>{html.escape(cat_name)}</b> အမျိုးအစားသို့ ရွှေ့ပြီးပါပြီ!",
+        t("a_move_done", lang, album=html.escape(album_name), cat=html.escape(cat_name)),
         parse_mode="HTML",
-        reply_markup=album_actions_kb(album_id, True),
+        reply_markup=album_actions_kb(album_id, True, lang),
     )
-    await callback.answer("✅ ရွှေ့ပြီးပါပြီ!")
+    await callback.answer(t("a_move_done", lang, album=album_name, cat=cat_name))
 
 
 @router.callback_query(F.data.startswith("del_song:"))
 async def delete_song_confirm(callback: CallbackQuery):
+    lang = await get_lang(callback.from_user.id)
     if not await is_admin(callback.from_user.id):
-        await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
+        await callback.answer(t("not_admin", lang))
         return
     song_id = ObjectId(callback.data.split(":")[1])
     song = await db.get_song(song_id)
     song_title = song["title"] if song else ""
     await callback.message.edit_text(
-        f"⚠️ <b>{html.escape(song_title)}</b> ကို ဖျက်မည်လား?",
+        t("a_del_song_confirm", lang, name=html.escape(song_title)),
         parse_mode="HTML",
-        reply_markup=admin_confirm_delete_kb(f"del_song:{song_id}", "del_pick_song"),
+        reply_markup=admin_confirm_delete_kb(f"del_song:{song_id}", "del_pick_song", lang),
     )
     await callback.answer()
 
 
 @router.callback_query(F.data.startswith("confirm_del_song:"))
 async def confirm_delete_song(callback: CallbackQuery):
+    lang = await get_lang(callback.from_user.id)
     if not await is_admin(callback.from_user.id):
-        await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
+        await callback.answer(t("not_admin", lang))
         return
     song_id = ObjectId(callback.data.split(":")[1])
     await db.delete_song(song_id)
-    await callback.answer("🗑 သီချင်း ဖျက်ပြီးပါပြီ!")
+    await callback.answer(t("a_del_song_done", lang))
     songs = await db.get_all_songs()
     if songs:
         await callback.message.edit_text(
-            "🗑 <b>ဖျက်မည့် သီချင်း ရွေးပါ:</b>",
+            t("a_del_choose_song", lang),
             parse_mode="HTML",
-            reply_markup=admin_song_delete_kb(songs),
+            reply_markup=admin_song_delete_kb(songs, lang),
         )
     else:
         await callback.message.edit_text(
-            "✅ <b>ဖျက်ပြီးပါပြီ!</b>\n\nသီချင်း မကျန်တော့ပါ။",
+            t("a_done_all", lang, what=t("a_what_songs", lang)),
             parse_mode="HTML",
-            reply_markup=admin_main_kb(),
+            reply_markup=admin_main_kb(lang),
         )
 
 
 @router.callback_query(F.data.startswith("del_cat:"))
 async def delete_category_confirm(callback: CallbackQuery):
+    lang = await get_lang(callback.from_user.id)
     if not await is_admin(callback.from_user.id):
-        await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
+        await callback.answer(t("not_admin", lang))
         return
     cat_id = ObjectId(callback.data.split(":")[1])
     cat = await db.get_category(cat_id)
     album_count = await db.db.albums.count_documents({"category_id": cat_id})
     cat_name = cat["name"] if cat else ""
     await callback.message.edit_text(
-        f"⚠️ <b>{html.escape(cat_name)}</b> အမျိုးအစား ကို ဖျက်မည်လား?\n\n"
-        f"ထဲမှ Album <b>{album_count}</b> ခုနှင့် ၎င်းတို့၏ သီချင်းများ အားလုံး "
-        "ပါ ဖျက်ပါမည်။",
+        t("a_del_cat_confirm", lang, name=html.escape(cat_name), n=album_count),
         parse_mode="HTML",
-        reply_markup=admin_confirm_delete_kb(f"del_cat:{cat_id}", "del_pick_cat"),
+        reply_markup=admin_confirm_delete_kb(f"del_cat:{cat_id}", "del_pick_cat", lang),
     )
     await callback.answer()
 
 
 @router.callback_query(F.data.startswith("confirm_del_cat:"))
 async def confirm_delete_category(callback: CallbackQuery):
+    lang = await get_lang(callback.from_user.id)
     if not await is_admin(callback.from_user.id):
-        await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
+        await callback.answer(t("not_admin", lang))
         return
     cat_id = ObjectId(callback.data.split(":")[1])
     albums = await db.get_albums(cat_id)
@@ -449,65 +429,68 @@ async def confirm_delete_category(callback: CallbackQuery):
         if artist_id:
             await db.delete_artist_if_empty(artist_id)
     await db.delete_category(cat_id)
-    await callback.answer("🗑 အမျိုးအစား ဖျက်ပြီးပါပြီ!")
+    await callback.answer(t("a_del_cat_done", lang))
     cats = await db.get_categories()
     if cats:
         await callback.message.edit_text(
-            "🗑 <b>ဖျက်မည့် အမျိုးအစား ရွေးပါ:</b>",
+            t("a_del_choose_cat", lang),
             parse_mode="HTML",
-            reply_markup=admin_delete_menu_kb(cats),
+            reply_markup=admin_delete_menu_kb(cats, lang),
         )
     else:
         await callback.message.edit_text(
-            "✅ <b>ဖျက်ပြီးပါပြီ!</b>\n\nအမျိုးအစား မကျန်တော့ပါ။",
+            t("a_done_all", lang, what=t("a_what_cats", lang)),
             parse_mode="HTML",
-            reply_markup=admin_main_kb(),
+            reply_markup=admin_main_kb(lang),
         )
 
 
 # ---------------- New: Upload album with auto artist grouping ----------------
 
-async def _ask_upload_category(callback: CallbackQuery):
+async def _ask_upload_category(callback: CallbackQuery, lang):
     cats = await db.get_categories()
     if not cats:
-        await callback.answer("⚠️ ဦးစွာ အမျိုးအစား (category) ထည့်ပါ!")
+        await callback.answer(t("a_upload_first_cat", lang))
         return
     await callback.message.edit_text(
-        "📀 <b>Album တင်မည့် အမျိုးအစား ရွေးပါ:</b>",
+        t("a_upload_choose_cat", lang),
         parse_mode="HTML",
-        reply_markup=upload_cat_kb(cats),
+        reply_markup=upload_cat_kb(cats, lang),
     )
     await callback.answer()
 
 
 @router.callback_query(F.data == "admin_upload")
 async def admin_upload(callback: CallbackQuery):
+    lang = await get_lang(callback.from_user.id)
     if not await is_admin(callback.from_user.id):
-        await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
+        await callback.answer(t("not_admin", lang))
         return
-    await _ask_upload_category(callback)
+    await _ask_upload_category(callback, lang)
 
 
 @router.message(Command("upload"))
 async def upload_command(message: Message, state: FSMContext):
+    lang = await get_lang(message.from_user.id)
     if not await is_admin(message.from_user.id):
-        await message.answer("❌ သင်သည် အက်ဒမင် မဟုတ်ပါ။")
+        await message.answer(t("not_admin_short", lang))
         return
     cats = await db.get_categories()
     if not cats:
-        await message.answer("⚠️ ဦးစွာ အမျိုးအစား (category) ထည့်ပါ!")
+        await message.answer(t("a_upload_first_cat", lang))
         return
     await message.answer(
-        "📀 <b>Album တင်မည့် အမျိုးအစား ရွေးပါ:</b>",
+        t("a_upload_choose_cat", lang),
         parse_mode="HTML",
-        reply_markup=upload_cat_kb(cats),
+        reply_markup=upload_cat_kb(cats, lang),
     )
 
 
 @router.callback_query(F.data.startswith("upcat:"))
 async def upload_choose_cat(callback: CallbackQuery, state: FSMContext):
+    lang = await get_lang(callback.from_user.id)
     if not await is_admin(callback.from_user.id):
-        await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
+        await callback.answer(t("not_admin", lang))
         return
     cat_id = ObjectId(callback.data.split(":")[1])
     await db.save_pending_upload(
@@ -522,22 +505,15 @@ async def upload_choose_cat(callback: CallbackQuery, state: FSMContext):
     )
     await state.set_state(AdminStates.upload_music)
     await callback.message.answer(
-        "🎼 <b>Album တင်ခြင်း စတင်နေသည်</b>\n\n"
-        "1️⃣ ကာဗာပုံ (optional): photo ပို့ပါ — caption ထဲ Album နာမည် ရေးနိုင်သည်\n"
-        "   (ပုံမလိုရင် ဤအဆင့် ကျော်နိုင်သည်)\n"
-        "2️⃣ သီချင်းများ: audio file / forward ပို့ပါ — အားလုံး ပို့ပြီးရင် "
-        "\"✅ ပြီးပါပြီ\" နှိပ်ပါ\n\n"
-        "💡 <b>Artist grouping:</b> သီချင်း audio ရဲ့ performer (or caption "
-        "'Song | Artist') နဲ့ အနုပညာရှင်ကို ခွဲသိမ်းပါမည် — name တူရင် "
-        "အနုပညာရှင် တစ်ဦးအောက် ပြန်စုပါမည်",
+        t("a_upload_started", lang),
         parse_mode="HTML",
-        reply_markup=upload_batch_kb(),
+        reply_markup=upload_batch_kb(lang),
     )
     await callback.answer()
 
 
 async def _parse_song_meta(message: Message, current_album: str):
-    """Return (title, artist, album_from_caption) for an audio/document message."""
+    """Return (title, artist, album_from_caption, file_id, file_size, duration)."""
     caption_parts = split_caption(message.caption)
     if message.audio:
         title = pick_song_title(message.audio.file_name or "", message.audio.title or "")
@@ -554,7 +530,6 @@ async def _parse_song_meta(message: Message, current_album: str):
         duration = 0
         default_album = current_album
 
-    # Caption formats: "Song | Artist"  or  "Album | Song | Artist"
     if len(caption_parts) >= 3:
         default_album = caption_parts[0]
         title = caption_parts[1] or title
@@ -565,8 +540,6 @@ async def _parse_song_meta(message: Message, current_album: str):
     elif len(caption_parts) == 1:
         title = caption_parts[0] or title
 
-    # Fill gaps from the file's embedded metadata (album is never sent by
-    # Telegram, so MP3 ID3 tags are the only reliable source for it).
     if not title or not artist or not default_album:
         meta = await read_audio_metadata(message.bot, file_id, file_size)
         if not title and meta.get("title"):
@@ -588,18 +561,19 @@ async def _parse_song_meta(message: Message, current_album: str):
 
 @router.message(AdminStates.upload_music, F.photo)
 async def upload_cover(message: Message, state: FSMContext):
+    lang = await get_lang(message.from_user.id)
     data = await state.get_data()
     cover = message.photo[-1].file_id
     album = (message.caption or "").strip()
     await db.save_pending_upload(message.from_user.id, cover=cover)
     await state.update_data(cover=cover)
-    text = "🖼 <b>ကာဗာပုံ ရရှိပြီ!</b>"
+    text = t("a_upload_cover_received", lang)
     if album:
         await db.save_pending_upload(message.from_user.id, album_name=album)
         await state.update_data(album_name=album)
-        text += f"\n📀 Album နာမည်: <b>{html.escape(album)}</b>"
-    text += "\n\nအခု သီချင်းများ ပို့ပါ 👇"
-    await message.answer(text, parse_mode="HTML", reply_markup=upload_batch_kb())
+        text += "\n" + t("a_upload_album_name_set", lang, name=html.escape(album))
+    text += "\n\n" + t("a_upload_send_songs", lang)
+    await message.answer(text, parse_mode="HTML", reply_markup=upload_batch_kb(lang))
 
 
 async def _append_to_pending(message: Message, state: FSMContext) -> list:
@@ -626,55 +600,47 @@ async def _append_to_pending(message: Message, state: FSMContext) -> list:
 
 @router.message(AdminStates.upload_music, F.audio | F.document)
 async def upload_song(message: Message, state: FSMContext):
+    lang = await get_lang(message.from_user.id)
     if message.document and "audio" not in (message.document.mime_type or ""):
-        await message.answer("⚠️ <b>အသံဖိုင် သာ ပို့နိုင်ပါသည်။</b>", parse_mode="HTML")
+        await message.answer(t("a_upload_audio_only", lang), parse_mode="HTML")
         return
     try:
         pending = await _append_to_pending(message, state)
     except Exception:
         await message.answer(
-            "⚠️ <b>ဤဖိုင်ကို မဖတ်နိုင်ပါ — နောက်တစ်ခု စမ်းပါ။</b>",
+            t("a_upload_unreadable", lang),
             parse_mode="HTML",
-            reply_markup=upload_batch_kb(),
+            reply_markup=upload_batch_kb(lang),
         )
         return
     title = pending[-1]["title"]
     artist = pending[-1]["artist"]
     album = pending[-1]["album"]
-    line = f"📥 <b>သီချင်း ({len(pending)})</b> ✅\n\n"
-    line += f"🎵 <b>{html.escape(title)}</b>"
-    if artist:
-        line += f"\n🎤 {html.escape(artist)}"
-    if not artist:
-        line += "\n⚠️ အဆိုတော် နာမည် မပါပါ — caption 'Song | Artist' ဖြင့် ပို့နိုင်သည်"
-    line += (
-        f"\n📀 {html.escape(album) or '—'}\n\n"
-        "ထပ်ပို့ပါ — ပြီးရင် \"✅ ပြီးပါပြီ\" ခလုတ် သို့မဟုတ် /done 👇"
-    )
-    await message.answer(line, parse_mode="HTML", reply_markup=upload_batch_kb())
+    artist_line = f"\n🎤 {html.escape(artist)}" if artist else t("a_upload_no_artist", lang)
+    line = t("a_upload_song_line", lang, n=len(pending), title=html.escape(title),
+             artist_line=artist_line, album=html.escape(album) or "—")
+    await message.answer(line, parse_mode="HTML", reply_markup=upload_batch_kb(lang))
 
 
 @router.message(AdminStates.upload_music, F.text)
 async def upload_set_album_name(message: Message, state: FSMContext):
     if message.text.startswith("/"):
         return
+    lang = await get_lang(message.from_user.id)
     album = normalize_myanmar(message.text.strip())
     await db.save_pending_upload(message.from_user.id, album_name=album)
     await state.update_data(album_name=album)
     await message.answer(
-        f"📀 <b>{html.escape(album)}</b>\n\n"
-        "အခု သီချင်းများ ပို့ပါ 👇",
+        t("a_upload_set_album", lang, name=html.escape(album)),
         parse_mode="HTML",
-        reply_markup=upload_batch_kb(),
+        reply_markup=upload_batch_kb(lang),
     )
 
 
 @router.message(AdminStates.upload_music)
 async def upload_wrong_type(message: Message):
-    await message.answer(
-        "⚠️ အသံဖိုင်ကို forward/ပို့ပါ၊ သို့မဟုတ် photo ပို့ပါ — ပြီးရင် \"✅ ပြီးပါပြီ\" ခလုတ် သို့မဟုတ် /done ပါ။",
-        parse_mode="HTML",
-    )
+    lang = await get_lang(message.from_user.id)
+    await message.answer(t("a_upload_wrong_type", lang), parse_mode="HTML")
 
 
 async def _announce_upload(bot, summary: str):
@@ -697,6 +663,7 @@ async def _load_pending_batch(user_id) -> list:
 async def _apply_finish_upload(reply_target, state: FSMContext) -> bool:
     """Finish the /upload batch flow. reply_target must have .answer() and .bot."""
     user_id = reply_target.chat.id
+    lang = await get_lang(user_id)
     data = await state.get_data()
     batch = await db.get_pending_upload(user_id) or {}
     pending = batch.get("pending_songs") or data.get("pending_songs") or []
@@ -719,12 +686,13 @@ async def _apply_finish_upload(reply_target, state: FSMContext) -> bool:
     albums_order = []
     songs_by_album = {}
     count = 0
+    skipped = 0
 
     for s in pending:
         artist_name = (s.get("artist") or "").strip() or "အမည်မသိ"
         album_name = (s.get("album") or "").strip() or batch_album_name
         if not album_name:
-            album_name = (artist_name + " အယ်လ်ဘမ်").strip()
+            album_name = (artist_name + " album").strip()
 
         artist = await db.get_or_create_artist(artist_name)
         album = await db.get_or_create_album(
@@ -743,8 +711,7 @@ async def _apply_finish_upload(reply_target, state: FSMContext) -> bool:
             albums_order.append(album_name)
 
         track_no = extract_track_no(s["title"])
-        count += 1
-        await db.add_song(
+        status, _song = await db.save_song_dedup(
             s["title"],
             album["_id"],
             s["file_id"],
@@ -753,49 +720,56 @@ async def _apply_finish_upload(reply_target, state: FSMContext) -> bool:
             artist_id=artist["_id"],
             track_no=track_no,
         )
+        if status == "skipped":
+            skipped += 1
+            continue
+        count += 1
         songs_by_album.setdefault(album_name, []).append((track_no, s["title"]))
 
     await state.clear()
     await db.clear_pending_upload(user_id)
 
-    text = f"✅ <b>ထည့်ပြီးပါပြီ!</b>\n\n"
-    text += f"🎵 သီချင်း: <b>{count}</b> ပုဒ်\n"
-    text += f"🎤 အနုပညာရှင်: <b>{len(set(artists_order))}</b>\n"
-    text += f"📀 Album: <b>{len(albums_order)}</b>\n\n"
-    text += "<b>သိမ်းထားသော Album များ:</b>\n"
+    lines = [t("a_upload_finished", lang, songs=count,
+               artists=len(set(artists_order)), albums=len(albums_order),
+               listing="__LISTING__")]
+    text = lines[0]
+    listing = ""
     for i, a in enumerate(albums_order, 1):
-        text += f"{i}. {html.escape(a)} — {html.escape(artists_used[a])}\n"
+        listing += f"{i}. {html.escape(a)} — {html.escape(artists_used[a])}\n"
     if songs_by_album:
-        text += "\n"
+        listing += "\n"
         for a in albums_order:
             songs = sorted(
                 songs_by_album.get(a, []), key=lambda x: (x[0] is None, x[0] or 0)
             )
-            text += f"📀 <b>{html.escape(a)}</b>\n"
+            if not songs:
+                continue
+            listing += f"📀 <b>{html.escape(a)}</b>\n"
             for i, (track_no, title) in enumerate(songs, 1):
-                text += f"№{track_no or i}. {html.escape(title)}\n"
-            text += "\n"
+                listing += f"№{track_no or i}. {html.escape(title)}\n"
+            listing += "\n"
+    if skipped:
+        listing += f"ℹ️ Skipped duplicates: {skipped}\n"
+    text = text.replace("__LISTING__", listing)
 
     await reply_target.answer(text, parse_mode="HTML")
 
     artists_list = "၊ ".join(sorted(set(artists_order)))
-    sum_text = (
-        f"🆕 <b>သီချင်းအသစ် ရောက်ရှိသည်</b>\n\n"
-        f"🎵 {count} ပုဒ် — 🎤 {artists_list or 'အမည်မသိ'}\n"
-        f"🎧 Bot ၌ နားထောင်နိုင်ပါပြီ"
-    )
+    sum_text = t("announce_new", lang, n=count,
+                 artists=artists_list or "အမည်မသိ")
     await _announce_upload(reply_target.bot, sum_text)
     return True
 
 
 @router.callback_query(F.data == "finish_upload")
 async def finish_upload(callback: CallbackQuery, state: FSMContext):
+    lang = await get_lang(callback.from_user.id)
     if not await is_admin(callback.from_user.id):
-        await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
+        await callback.answer(t("not_admin", lang))
         return
     pending = await _load_pending_batch(callback.from_user.id)
     if not pending:
-        await callback.answer("⚠️ သီချင်း မပို့ရသေးပါ!", show_alert=True)
+        await callback.answer(t("a_nothing_pending", lang), show_alert=True)
         return
     await _apply_finish_upload(callback.message, state)
     await callback.answer()
@@ -803,15 +777,16 @@ async def finish_upload(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "cancel_upload")
 async def cancel_upload(callback: CallbackQuery, state: FSMContext):
+    lang = await get_lang(callback.from_user.id)
     if not await is_admin(callback.from_user.id):
-        await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
+        await callback.answer(t("not_admin", lang))
         return
     await state.clear()
     await db.clear_pending_upload(callback.from_user.id)
     await callback.message.answer(
-        "❌ <b>တင်ခြင်း ရပ်လိုက်ပါပြီ</b>",
+        t("a_upload_cancelled", lang),
         parse_mode="HTML",
-        reply_markup=admin_main_kb(),
+        reply_markup=admin_main_kb(lang),
     )
     await callback.answer()
 
@@ -821,6 +796,7 @@ async def cancel_upload(callback: CallbackQuery, state: FSMContext):
 async def _resume_pending_upload(message: Message, state: FSMContext, pending: list):
     """The bot restarted mid-/upload, so FSM was wiped but the batch survives in DB.
     Re-enter the upload flow so this forward keeps queuing into the same album."""
+    lang = await get_lang(message.from_user.id)
     batch = await db.get_pending_upload(message.from_user.id) or {}
     await state.set_data(
         {
@@ -834,27 +810,21 @@ async def _resume_pending_upload(message: Message, state: FSMContext, pending: l
     await _append_to_pending(message, state)
     new_pending = await _load_pending_batch(message.from_user.id)
     s = new_pending[-1]
-    line = f"📥 <b>သီချင်း ({len(new_pending)})</b> ✅\n\n"
-    line += f"🎵 <b>{html.escape(s['title'])}</b>"
-    if s.get("artist"):
-        line += f"\n🎤 {html.escape(s['artist'])}"
-    if not s.get("artist"):
-        line += "\n⚠️ အဆိုတော် နာမည် မပါပါ — caption 'Song | Artist' ဖြင့် ပို့နိုင်သည်"
-    line += f"\n📀 {html.escape(s.get('album') or '') or '—'}\n\n"
-    line += "\"✅ ပြီးပါပြီ\" ခလုတ် (သို့) /done နှိပ်ပါ"
-    await message.answer(line, parse_mode="HTML", reply_markup=upload_batch_kb())
+    artist_line = f"\n🎤 {html.escape(s['artist'])}" if s.get("artist") else t("a_upload_no_artist", lang)
+    line = t("a_upload_song_line", lang, n=len(new_pending), title=html.escape(s["title"]),
+             artist_line=artist_line, album=html.escape(s.get("album") or "") or "—")
+    await message.answer(line, parse_mode="HTML", reply_markup=upload_batch_kb(lang))
 
 
 @router.message(StateFilter(None), F.audio | F.document)
 async def auto_save_forwarded(message: Message, state: FSMContext):
+    lang = await get_lang(message.from_user.id)
     if not await is_admin(message.from_user.id):
         return
     if message.chat.type != "private":
         return
     if message.document and "audio" not in (message.document.mime_type or ""):
         return
-    # If the admin forwards audio without an active /upload flow, auto-start a
-    # new batch so the same acceptance (sequential № + buttons + /done) applies.
     pending = await _load_pending_batch(message.from_user.id)
     if not pending:
         auto_cat = await db.get_or_create_category(AUTO_CATEGORY)
@@ -869,9 +839,7 @@ async def auto_save_forwarded(message: Message, state: FSMContext):
     except Exception as e:
         logging.warning(f"Auto-save failed: {e}")
         await message.answer(
-            "⚠️ <b>ဤသီချင်းကို သိမ်း၍မရပါ</b>\n\n"
-            f"အမှား: <code>{html.escape(str(e))}</code>\n\n"
-            "ပြန်လည် ပို့ကြည့်ပါ သို့မဟုတ် /upload ဖြင့် ထပ်စမ်းပါ။",
+            t("a_upload_save_failed", lang, err=html.escape(str(e))),
             parse_mode="HTML",
         )
 
@@ -880,70 +848,78 @@ async def auto_save_forwarded(message: Message, state: FSMContext):
 
 @router.message(AdminStates.waiting_cat_name)
 async def receive_cat_name(message: Message, state: FSMContext):
+    lang = await get_lang(message.from_user.id)
     name = message.text.strip()
     await state.update_data(cat_name=name)
     await state.set_state(AdminStates.waiting_cat_desc)
-    await message.answer("📝 <b>ဖော်ပြချက် ရိုက်ထည့်ပါ (မလိုရင် /skip):</b>", parse_mode="HTML")
+    await message.answer(t("a_cat_desc_prompt", lang), parse_mode="HTML")
 
 
 @router.message(AdminStates.waiting_cat_desc, F.text == "/skip")
 async def skip_cat_desc(message: Message, state: FSMContext):
+    lang = await get_lang(message.from_user.id)
     data = await state.get_data()
     await db.add_category(data["cat_name"], "")
     await state.clear()
-    await message.answer("✅ <b>အမျိုးအစား ထည့်ပြီးပါပြီ!</b>", parse_mode="HTML", reply_markup=admin_main_kb())
+    await message.answer(t("a_cat_added", lang), parse_mode="HTML", reply_markup=admin_main_kb(lang))
 
 
 @router.message(AdminStates.waiting_cat_desc)
 async def receive_cat_desc(message: Message, state: FSMContext):
+    lang = await get_lang(message.from_user.id)
     desc = message.text.strip()
     data = await state.get_data()
     await db.add_category(data["cat_name"], desc)
     await state.clear()
-    await message.answer("✅ <b>အမျိုးအစား ထည့်ပြီးပါပြီ!</b>", parse_mode="HTML", reply_markup=admin_main_kb())
+    await message.answer(t("a_cat_added", lang), parse_mode="HTML", reply_markup=admin_main_kb(lang))
 
 
 @router.callback_query(F.data.startswith("add_album:"))
 async def add_album_to_cat(callback: CallbackQuery, state: FSMContext):
+    lang = await get_lang(callback.from_user.id)
     if not await is_admin(callback.from_user.id):
-        await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
+        await callback.answer(t("not_admin", lang))
         return
     cat_id = ObjectId(callback.data.split(":")[1])
     await state.update_data(album_cat_id=cat_id)
     await state.set_state(AdminStates.waiting_album_name)
-    await callback.message.answer("📀 <b>အယ်လ်ဘမ် အမည် ရိုက်ထည့်ပါ:</b>", parse_mode="HTML")
+    await callback.message.answer(t("a_album_name_prompt", lang), parse_mode="HTML")
     await callback.answer()
 
 
 @router.callback_query(AdminStates.waiting_album_cat, F.data.startswith("albadd_cat:"))
 async def choose_album_cat(callback: CallbackQuery, state: FSMContext):
+    lang = await get_lang(callback.from_user.id)
     cat_id = ObjectId(callback.data.split(":")[1])
     await state.update_data(album_cat_id=cat_id)
     await state.set_state(AdminStates.waiting_album_name)
-    await callback.message.answer("📀 <b>အယ်လ်ဘမ် အမည် ရိုက်ထည့်ပါ:</b>", parse_mode="HTML")
+    await callback.message.answer(t("a_album_name_prompt", lang), parse_mode="HTML")
     await callback.answer()
 
 
 @router.message(AdminStates.waiting_album_name)
 async def receive_album_name(message: Message, state: FSMContext):
+    lang = await get_lang(message.from_user.id)
     name = message.text.strip()
     await state.update_data(album_name=name)
     await state.set_state(AdminStates.waiting_album_artist)
-    await message.answer("🎤 <b>အနုပညာရှင် အမည် ရိုက်ထည့်ပါ (မလိုရင် /skip):</b>", parse_mode="HTML")
+    await message.answer(t("a_album_artist_prompt", lang), parse_mode="HTML")
 
 
 @router.message(AdminStates.waiting_album_artist, F.text == "/skip")
 async def skip_album_artist(message: Message, state: FSMContext):
+    lang = await get_lang(message.from_user.id)
     await state.update_data(album_artist="")
     await state.set_state(AdminStates.waiting_album_cover)
-    await message.answer("🖼 <b>အယ်လ်ဘမ် ကာဗာပုံ ပို့ပါ (မလိုရင် /skip):</b>", parse_mode="HTML")
+    await message.answer(t("a_album_cover_prompt", lang), parse_mode="HTML")
 
 
 @router.message(AdminStates.waiting_album_artist)
 async def receive_album_artist(message: Message, state: FSMContext):
+    lang = await get_lang(message.from_user.id)
     await state.update_data(album_artist=message.text.strip())
     await state.set_state(AdminStates.waiting_album_cover)
-    await message.answer("🖼 <b>အယ်လ်ဘမ် ကာဗာပုံ ပို့ပါ (မလိုရင် /skip):</b>", parse_mode="HTML")
+    await message.answer(t("a_album_cover_prompt", lang), parse_mode="HTML")
 
 
 @router.message(AdminStates.waiting_album_cover, F.photo)
@@ -959,10 +935,12 @@ async def skip_album_cover(message: Message, state: FSMContext):
 
 @router.message(AdminStates.waiting_album_cover)
 async def album_cover_wrong_type(message: Message):
-    await message.answer("🖼 <b>ကာဗာအတွက် ပုံ ပို့ပါ သို့မဟုတ် /skip နှိပ်ပါ:</b>", parse_mode="HTML")
+    lang = await get_lang(message.from_user.id)
+    await message.answer(t("a_album_cover_wrong", lang), parse_mode="HTML")
 
 
 async def _finish_add_album(message: Message, state: FSMContext, cover=""):
+    lang = await get_lang(message.from_user.id)
     data = await state.get_data()
     result = await db.add_album(
         data.get("album_name", ""),
@@ -975,45 +953,42 @@ async def _finish_add_album(message: Message, state: FSMContext, cover=""):
 
     name = data.get("album_name", "")
     artist = data.get("album_artist", "")
-    text = f"✅ <b>အယ်လ်ဘမ် ထည့်ပြီးပါပြီ!</b>\n\n"
-    text += f"📀 <b>{html.escape(name)}</b>\n"
-    if artist:
-        text += f"🎤 {html.escape(artist)}\n"
-    text += "\nအခု သီချင်းများ ထည့်နိုင်ပါပြီ 👇"
-    await message.answer(text, parse_mode="HTML", reply_markup=album_added_kb(album_id))
+    artist_line = t("a_album_added_artist", lang, artist=html.escape(artist)) if artist else ""
+    await message.answer(
+        t("a_album_added", lang, name=html.escape(name), artist_line=artist_line),
+        parse_mode="HTML",
+        reply_markup=album_added_kb(album_id, lang),
+    )
 
 
 # ---------------- Song upload (batch) ----------------
 
-async def _begin_song_batch(message: Message, state: FSMContext, album_id):
+async def _begin_song_batch(message: Message, state: FSMContext, album_id, lang):
     album = await db.get_album(album_id)
     album_name = album["name"] if album else ""
     await state.set_data({"song_album_id": album_id, "song_count": 0, "pending_title": None})
     await state.set_state(AdminStates.adding_songs)
-    text = (
-        f"🎵 <b>သီချင်းများ ထည့်မည်</b>\n\n"
-        f"📀 <b>{html.escape(album_name)}</b>\n\n"
-        "1️⃣ ချန်နယ် (သို့) အခြားနေရာမှ အသံဖိုင်များကို forward/ပို့ပါ — "
-        "တစ်ခါတည်း အများကြီး ပို့လို့ရပါသည်\n"
-        "2️⃣ အားလုံး ပို့ပြီးရင် \"✅ ပြီးပါပြီ\" ခလုတ် (သို့မဟုတ် /done) နှိပ်ပါ\n\n"
-        "💡 သီချင်းတစ်ပုဒ်ချင်းစီ နာမည် သတ်မှတ်ချင်ရင် ဖိုင်မပို့ခင် "
-        "နာမည် ဦးစွာ ရိုက်ထည့်နိုင်ပါသည် (မထည့်ရင် ဖိုင်မှ metadata အတိုင်း ယူပါမည်)"
+    await message.answer(
+        t("a_batch_begin", lang, album=html.escape(album_name)),
+        parse_mode="HTML",
+        reply_markup=adding_songs_kb(album_id, lang),
     )
-    await message.answer(text, parse_mode="HTML", reply_markup=adding_songs_kb(album_id))
 
 
 @router.callback_query(F.data.startswith("add_song:"))
 async def start_song_upload(callback: CallbackQuery, state: FSMContext):
+    lang = await get_lang(callback.from_user.id)
     if not await is_admin(callback.from_user.id):
-        await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
+        await callback.answer(t("not_admin", lang))
         return
     album_id = ObjectId(callback.data.split(":")[1])
-    await _begin_song_batch(callback.message, state, album_id)
+    await _begin_song_batch(callback.message, state, album_id, lang)
     await callback.answer()
 
 
 @router.message(AdminStates.adding_songs, F.audio | F.document)
 async def add_batch_song(message: Message, state: FSMContext):
+    lang = await get_lang(message.from_user.id)
     data = await state.get_data()
     album_id = data["song_album_id"]
     album_doc = await db.get_album(album_id)
@@ -1027,7 +1002,7 @@ async def add_batch_song(message: Message, state: FSMContext):
         auto_title = pick_song_title(message.audio.file_name or "", message.audio.title or "")
     else:
         if "audio" not in (message.document.mime_type or ""):
-            await message.answer("⚠️ <b>အသံဖိုင် သာ ပို့နိုင်ပါသည်။</b>", parse_mode="HTML")
+            await message.answer(t("a_upload_audio_only", lang), parse_mode="HTML")
             return
         file_id = message.document.file_id
         file_size = message.document.file_size or 0
@@ -1043,46 +1018,44 @@ async def add_batch_song(message: Message, state: FSMContext):
         title = title.rsplit(".", 1)[0]
 
     track_no = extract_track_no(title)
-    await db.add_song(
+    status, _song = await db.save_song_dedup(
         title, album_id, file_id, file_size, duration, track_no=track_no
     )
     count = data.get("song_count", 0) + 1
     await state.update_data(song_count=count, pending_title=None)
 
-    await message.answer(
-        f"📥 <b>သီချင်း ({count})</b> ✅\n\n"
-        f"🎵 <b>{html.escape(title)}</b>\n"
-        f"📀 {html.escape(album_name)} ထဲ ထည့်ပြီးပါပြီ။\n"
-        "ထပ်ပို့ပါ — အားလုံးပြီးရင် \"✅ ပြီးပါပြီ\" ခလုတ် သို့မဟုတ် /done နှိပ်ပါ 👇",
-        parse_mode="HTML",
-        reply_markup=adding_songs_kb(album_id),
-    )
+    if status == "skipped":
+        msg = t("ch_duplicate", lang)
+    else:
+        msg = t("a_batch_song_added", lang, n=count, title=html.escape(title),
+                album=html.escape(album_name))
+    await message.answer(msg, parse_mode="HTML", reply_markup=adding_songs_kb(album_id, lang))
 
 
 @router.message(AdminStates.adding_songs, F.text)
 async def set_batch_song_title(message: Message, state: FSMContext):
     if message.text.startswith("/"):
         return
+    lang = await get_lang(message.from_user.id)
     data = await state.get_data()
     await state.update_data(pending_title=message.text.strip())
     await message.answer(
-        f"🎵 နာမည် သတ်မှတ်ပြီ — <b>{html.escape(message.text.strip())}</b>\n"
-        "အခု သီချင်းဖိုင် ပို့ပါ 👇",
+        t("a_batch_title_set", lang, title=html.escape(message.text.strip())),
         parse_mode="HTML",
-        reply_markup=adding_songs_kb(data["song_album_id"]),
+        reply_markup=adding_songs_kb(data["song_album_id"], lang),
     )
 
 
 @router.message(AdminStates.adding_songs)
 async def batch_add_wrong_type(message: Message):
-    await message.answer(
-        "⚠️ <b>အသံဖိုင် (.mp3) ပို့ပါ</b> သို့မဟုတ် \"✅ ပြီးပါပြီ\" ခလုတ် (သို့မဟုတ် /done) နှိပ်ပါ။",
-        parse_mode="HTML",
-    )
+    lang = await get_lang(message.from_user.id)
+    await message.answer(t("a_batch_audio_only", lang), parse_mode="HTML")
 
 
 async def _apply_finish_batch(reply_target, state: FSMContext, album_id=None) -> bool:
     """Finish the add-songs-to-existing-album flow. reply_target must have .answer()."""
+    user_id = reply_target.chat.id
+    lang = await get_lang(user_id)
     data = await state.get_data()
     if album_id is None:
         album_id = data.get("song_album_id")
@@ -1092,20 +1065,12 @@ async def _apply_finish_batch(reply_target, state: FSMContext, album_id=None) ->
     await state.clear()
 
     if count == 0:
-        text = (
-            "⚠️ <b>သီချင်း မထည့်ရသေးပါ!</b>\n\n"
-            "အသံဖိုင်များ forward ပို့ပြီးမှ \"✅ ပြီးပါပြီ\" ခလုတ် နှိပ်ပါ။"
-        )
-        kb = album_added_kb(album_id)
+        text = t("a_batch_none", lang)
+        kb = album_added_kb(album_id, lang)
         ok = False
     else:
-        text = (
-            f"✅ <b>ပြီးပါပြီ!</b>\n\n"
-            f"📀 {html.escape(album_name)}\n"
-            f"🎵 ထည့်ပြီး သီချင်း: <b>{count}</b> ပုဒ်\n\n"
-            "🎧 User များ အခု album ထဲမှ နားဆင် / ဒေါင်းလုဒ်လို့ ရပါပြီ!"
-        )
-        kb = song_added_kb(album_id)
+        text = t("a_batch_done", lang, album=html.escape(album_name), n=count)
+        kb = song_added_kb(album_id, lang)
         ok = True
     await reply_target.answer(text, parse_mode="HTML", reply_markup=kb)
     return ok
@@ -1113,8 +1078,9 @@ async def _apply_finish_batch(reply_target, state: FSMContext, album_id=None) ->
 
 @router.callback_query(F.data.startswith("finish_songs:"))
 async def finish_batch(callback: CallbackQuery, state: FSMContext):
+    lang = await get_lang(callback.from_user.id)
     if not await is_admin(callback.from_user.id):
-        await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
+        await callback.answer(t("not_admin", lang))
         return
     album_id = ObjectId(callback.data.split(":")[1])
     await _apply_finish_batch(callback.message, state, album_id=album_id)
@@ -1123,14 +1089,14 @@ async def finish_batch(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "cancel_batch")
 async def cancel_batch(callback: CallbackQuery, state: FSMContext):
+    lang = await get_lang(callback.from_user.id)
     if not await is_admin(callback.from_user.id):
-        await callback.answer("❌ အက်ဒမင် မဟုတ်ပါ!")
+        await callback.answer(t("not_admin", lang))
         return
     await state.clear()
     await callback.message.answer(
-        "❌ <b>ထည့်ခြင်း ရပ်လိုက်ပါပြီ</b>\n\n"
-        "(ထည့်ပြီးသား သီချင်းများမှာ သိမ်းထားပြီးသား ဖြစ်ပါသည်)",
+        t("a_batch_cancelled", lang),
         parse_mode="HTML",
-        reply_markup=admin_main_kb(),
+        reply_markup=admin_main_kb(lang),
     )
     await callback.answer()

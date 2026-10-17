@@ -1,4 +1,5 @@
 import logging
+import html
 
 from aiogram import Router, F
 from aiogram.types import Message
@@ -8,6 +9,7 @@ from config import CHANNEL_ID
 from utils.formatters import split_caption
 from utils.converter import normalize_myanmar
 from utils.metadata import read_audio_metadata, pick_song_title, extract_track_no
+from utils.i18n import t, DEFAULT_LANG
 
 router = Router()
 
@@ -92,12 +94,6 @@ async def on_channel_audio(message: Message):
         artist_name = normalize_myanmar(artist_name)
         album_name = normalize_myanmar(album_name)
 
-        # Skip duplicates (same file_id already saved)
-        existing = await db.db.songs.find_one({"file_id": file_id})
-        if existing:
-            await message.reply("ℹ️ ဤသီချင်းကို သိမ်းပြီးသား ဖြစ်ပါသည်။")
-            return
-
         artist = await db.get_or_create_artist(artist_name or "အမည်မသိ")
         auto_cat = await db.get_or_create_category(AUTO_CATEGORY)
         album = await db.get_or_create_album(
@@ -106,7 +102,7 @@ async def on_channel_audio(message: Message):
             category_id=auto_cat["_id"] if auto_cat else None,
             artist_id=artist["_id"],
         )
-        await db.add_song(
+        status, _song = await db.save_song_dedup(
             title,
             album["_id"],
             file_id,
@@ -116,12 +112,13 @@ async def on_channel_audio(message: Message):
             track_no=extract_track_no(title),
         )
 
+        if status == "skipped":
+            await message.reply(t("ch_duplicate", DEFAULT_LANG), parse_mode="HTML")
+            return
+
         await message.reply(
-            f"✅ <b>သီချင်းအသစ် ရောက်ရှိပါပြီ!</b>\n\n"
-            f"🎧 {title}\n"
-            f"🎤 {artist['name']}\n"
-            f"📀 {album_name}\n\n"
-            "🤖 Bot မှ ရယူလိုပါက bot chat သို့ ဝင်ရောက်ပါ",
+            t("ch_saved", DEFAULT_LANG, title=html.escape(title),
+              artist=html.escape(artist["name"]), album=html.escape(album_name)),
             parse_mode="HTML",
         )
     except Exception as e:
