@@ -5,3 +5,4 @@ aiofiles>=23.2
 aiohttp>=3.9
 mutagen>=1.47.0
 deep-translator>=1.11.4
+pyrogram>=2.0.106

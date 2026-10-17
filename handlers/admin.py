@@ -10,9 +10,10 @@ from aiogram.filters.state import StateFilter
 from aiogram.filters import Command
 import logging
 import html
+import asyncio
 
 from database import db, AUTO_CATEGORY
-from config import ADMIN_IDS, CHANNEL_ID
+from config import ADMIN_IDS, CHANNEL_ID, BOT_TOKEN, TG_API_ID, TG_API_HASH
 from bson import ObjectId
 from keyboards.inline import (
     admin_main_kb,
@@ -107,6 +108,110 @@ async def backfill_translate_command(message: Message):
         await status_msg.edit_text(t("a_bf_none", lang))
     else:
         await status_msg.edit_text(t("a_bf_done", lang, n=done))
+
+
+_bg_tasks = set()
+
+
+async def _enumerate_channel_audio_ids():
+    """List channel message ids that are audio, using MTProto (Pyrogram).
+
+    The Bot API cannot read old channel history, so we use a bot session via
+    MTProto only to *enumerate* message ids.
+    """
+    from pyrogram import Client
+
+    # Numeric channel ids must be ints for MTProto; @usernames stay strings.
+    chat = int(CHANNEL_ID) if str(CHANNEL_ID).lstrip("-").isdigit() else CHANNEL_ID
+    ids = []
+    app = Client(
+        "channel_import",
+        api_id=int(TG_API_ID),
+        api_hash=TG_API_HASH,
+        bot_token=BOT_TOKEN,
+        in_memory=True,
+    )
+    async with app:
+        me = await app.get_me()
+        async for m in app.get_chat_history(chat):
+            if getattr(m, "from_user", None) and m.from_user.id == me.id:
+                continue
+            is_audio = bool(getattr(m, "audio", None))
+            if not is_audio:
+                doc = getattr(m, "document", None)
+                if doc and "audio" in (getattr(doc, "mime_type", "") or ""):
+                    is_audio = True
+            if is_audio:
+                ids.append(m.id)
+    return ids
+
+
+async def _run_channel_import(bot, status_msg, lang, admin_chat_id):
+    from handlers.channel import process_channel_audio
+
+    try:
+        ids = await _enumerate_channel_audio_ids()
+    except Exception as e:
+        logging.exception("Channel enumeration failed")
+        try:
+            await status_msg.edit_text(t("a_imp_failed", lang, err=html.escape(str(e))))
+        except Exception:
+            pass
+        return
+
+    total = len(ids)
+    added = replaced = skipped = 0
+    for i, mid in enumerate(ids, 1):
+        try:
+            # Forward to the admin's own chat so the Bot API hands us a usable
+            # file_id, then immediately delete the temporary forwarded copy.
+            fwd = await bot.forward_message(
+                chat_id=admin_chat_id, from_chat_id=CHANNEL_ID, message_id=mid)
+            st = await process_channel_audio(bot, fwd, notify=False)
+            if st == "added":
+                added += 1
+            elif st == "replaced":
+                replaced += 1
+            elif st == "skipped":
+                skipped += 1
+            try:
+                await bot.delete_message(chat_id=admin_chat_id, message_id=fwd.message_id)
+            except Exception:
+                pass
+        except Exception:
+            logging.exception("Channel import failed for message %s", mid)
+        if i % 10 == 0 or i == total:
+            try:
+                await status_msg.edit_text(
+                    t("a_imp_progress", lang, scanned=i, total=total,
+                      added=added, skipped=skipped))
+            except Exception:
+                pass
+
+    try:
+        await status_msg.edit_text(
+            t("a_imp_done", lang, scanned=total, added=added,
+              replaced=replaced, skipped=skipped))
+    except Exception:
+        pass
+
+
+@router.message(Command("importchannel"))
+async def import_channel_command(message: Message):
+    if not await is_admin(message.from_user.id):
+        return
+    lang = await get_lang(message.from_user.id)
+    if not CHANNEL_ID:
+        await message.answer(t("a_imp_no_channel", lang), parse_mode="HTML")
+        return
+    if not (TG_API_ID and TG_API_HASH):
+        await message.answer(t("a_imp_no_creds", lang), parse_mode="HTML")
+        return
+    status_msg = await message.answer(t("a_imp_start", lang))
+    task = asyncio.create_task(
+        _run_channel_import(message.bot, status_msg, lang, message.chat.id))
+    _bg_tasks.add(task)
+    task.add_done_callback(_bg_tasks.discard)
 
 
 # ---------------- Admin menu ----------------

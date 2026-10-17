@@ -19,20 +19,26 @@ DEFAULT_ALBUM = "ချန်နယ် စုစည်းမှု"
 _bot_id = None
 
 
-async def _get_bot_id(message: Message):
+async def _get_bot_id(bot):
+    """Cache the bot's own id (used to ignore its own announcements)."""
     global _bot_id
     if _bot_id is None:
-        me = await message.bot.get_me()
+        me = await bot.get_me()
         _bot_id = me.id
     return _bot_id
 
 
-@router.channel_post(F.audio | F.document)
-async def on_channel_audio(message: Message):
+async def process_channel_audio(bot, message, notify=False):
+    """Extract and store one channel audio message into the database.
+
+    Reusable by both the live ``channel_post`` handler and the historical
+    import command. Returns one of: "added", "replaced", "skipped",
+    "ignored", "error".
+    """
     try:
         # Ignore messages posted by the bot itself (e.g. release announcements)
-        if message.from_user and message.from_user.id == await _get_bot_id(message):
-            return
+        if message.from_user and message.from_user.id == await _get_bot_id(bot):
+            return "ignored"
 
         if message.audio:
             file_id = message.audio.file_id
@@ -43,14 +49,14 @@ async def on_channel_audio(message: Message):
         elif message.document:
             mime = (message.document.mime_type or "")
             if "audio" not in mime:
-                return
+                return "ignored"
             file_id = message.document.file_id
             file_size = message.document.file_size or 0
             duration = 0
             title = message.document.file_name or ""
             performer = ""
         else:
-            return
+            return "ignored"
 
         caption = message.caption or ""
         parts = split_caption(caption)
@@ -77,7 +83,7 @@ async def on_channel_audio(message: Message):
         # Fill gaps from the file's embedded metadata (album is never sent by
         # Telegram, so MP3 ID3 tags are the only reliable source for it).
         if not title or not performer or not album_name:
-            meta = await read_audio_metadata(message.bot, file_id, file_size)
+            meta = await read_audio_metadata(bot, file_id, file_size)
             if not title and meta.get("title"):
                 title = meta["title"]
             if not performer and meta.get("artist"):
@@ -114,14 +120,21 @@ async def on_channel_audio(message: Message):
             search_terms=await build_search_terms(title, artist["name"], album_name),
         )
 
-        if status == "skipped":
-            await message.reply(t("ch_duplicate", DEFAULT_LANG), parse_mode="HTML")
-            return
-
-        await message.reply(
-            t("ch_saved", DEFAULT_LANG, title=html.escape(title),
-              artist=html.escape(artist["name"]), album=html.escape(album_name)),
-            parse_mode="HTML",
-        )
+        if notify:
+            if status == "skipped":
+                await message.reply(t("ch_duplicate", DEFAULT_LANG), parse_mode="HTML")
+            else:
+                await message.reply(
+                    t("ch_saved", DEFAULT_LANG, title=html.escape(title),
+                      artist=html.escape(artist["name"]), album=html.escape(album_name)),
+                    parse_mode="HTML",
+                )
+        return status
     except Exception as e:
-        logging.warning(f"Channel auto-save failed: {e}")
+        logging.warning(f"Channel save failed: {e}")
+        return "error"
+
+
+@router.channel_post(F.audio | F.document)
+async def on_channel_audio(message: Message):
+    await process_channel_audio(message.bot, message, notify=True)

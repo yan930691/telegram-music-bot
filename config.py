@@ -11,6 +11,11 @@ ADMIN_IDS = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "").split(",") if x.
 # Channel ID for new release notifications (e.g. "@your_channel" or "-1001234567890")
 CHANNEL_ID = os.getenv("CHANNEL_ID", "")
 
+# MTProto credentials for importing a channel's older messages (Pyrogram).
+# Get them from https://my.telegram.org -> API development tools.
+TG_API_ID = os.getenv("TG_API_ID", "")
+TG_API_HASH = os.getenv("TG_API_HASH", "")
+
 MUSIC_DIR = os.path.join(os.path.dirname(__file__), "data", "music")
 os.makedirs(MUSIC_DIR, exist_ok=True)
 
