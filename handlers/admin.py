@@ -113,22 +113,37 @@ async def backfill_translate_command(message: Message):
 _bg_tasks = set()
 
 
-async def _resolve_channel_peer(app, chat):
+async def _resolve_channel_peer(app, chat, on_wait=None):
     """Resolve a channel to an id Pyrogram can use.
 
     ``get_dialogs``/``get_chat_history`` are users-only, so a bot can only
     resolve a channel from its @username or from a peer it has already seen in
-    an update. A bare numeric id for a private channel cannot be resolved
-    without a cached access_hash.
+    an update. A bare numeric id for a private channel needs an access_hash,
+    which a bot only learns when it receives any update from that channel. If
+    ``on_wait`` is given we wait for such an update (e.g. the admin posts
+    something in the channel).
     """
     try:
         return (await app.get_chat(chat)).id
     except Exception as e:
         logging.warning("Pyrogram get_chat(%s) failed: %s", chat, e)
+    # Private channel given by numeric id: wait for an update that caches it.
+    if str(chat).lstrip("-").isdigit():
+        if on_wait:
+            try:
+                await on_wait()
+            except Exception:
+                pass
+        for _ in range(45):  # ~90 seconds
+            await asyncio.sleep(2)
+            try:
+                return (await app.get_chat(chat)).id
+            except Exception:
+                continue
     return chat
 
 
-async def _enumerate_channel_audio_ids():
+async def _enumerate_channel_audio_ids(on_wait=None):
     """List channel message ids that are audio, using MTProto (Pyrogram).
 
     The Bot API cannot read old channel history, and ``get_chat_history`` is
@@ -146,10 +161,9 @@ async def _enumerate_channel_audio_ids():
         api_id=int(TG_API_ID),
         api_hash=TG_API_HASH,
         bot_token=BOT_TOKEN,
-        in_memory=True,
     )
     async with app:
-        resolved = await _resolve_channel_peer(app, chat)
+        resolved = await _resolve_channel_peer(app, chat, on_wait=on_wait)
         batch = 200
         start = 1
         empty_streak = 0
@@ -182,8 +196,14 @@ async def _enumerate_channel_audio_ids():
 async def _run_channel_import(bot, status_msg, lang, admin_chat_id):
     from handlers.channel import process_channel_audio
 
+    async def _on_wait():
+        try:
+            await status_msg.edit_text(t("a_imp_need_post", lang), parse_mode="HTML")
+        except Exception:
+            pass
+
     try:
-        ids = await _enumerate_channel_audio_ids()
+        ids = await _enumerate_channel_audio_ids(on_wait=_on_wait)
     except Exception as e:
         logging.exception("Channel enumeration failed")
         msg = str(e)
