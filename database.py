@@ -211,27 +211,28 @@ class Database:
     async def get_song(self, song_id):
         return await self.db.songs.find_one({"_id": song_id})
 
-    async def add_song(self, title, album_id, file_id, file_size=0, duration=0, artist_id=None, track_no=None):
-        return await self.db.songs.insert_one(
-            {
-                "title": title,
-                "album_id": album_id,
-                "artist_id": artist_id,
-                "file_id": file_id,
-                "file_size": file_size,
-                "duration": duration,
-                "track_no": track_no,
-                "downloads": 0,
-                "created_at": __import__("datetime").datetime.utcnow(),
-            }
-        )
+    async def add_song(self, title, album_id, file_id, file_size=0, duration=0, artist_id=None, track_no=None, search_terms=None):
+        doc = {
+            "title": title,
+            "album_id": album_id,
+            "artist_id": artist_id,
+            "file_id": file_id,
+            "file_size": file_size,
+            "duration": duration,
+            "track_no": track_no,
+            "downloads": 0,
+            "created_at": __import__("datetime").datetime.utcnow(),
+        }
+        if search_terms:
+            doc["search_terms"] = list(search_terms)
+        return await self.db.songs.insert_one(doc)
 
     async def update_song(self, song_id, **kwargs):
         await self.db.songs.update_one({"_id": song_id}, {"$set": kwargs})
 
     async def save_song_dedup(
         self, title, album_id, file_id, file_size=0, duration=0,
-        artist_id=None, track_no=None,
+        artist_id=None, track_no=None, search_terms=None,
     ):
         """Insert a song with quality-aware duplicate handling.
 
@@ -254,6 +255,8 @@ class Database:
                 update = {"file_id": file_id, "file_size": file_size}
                 if duration:
                     update["duration"] = duration
+                if search_terms:
+                    update["search_terms"] = list(search_terms)
                 await self.update_song(existing["_id"], **update)
                 existing.update(update)
                 return "replaced", existing
@@ -262,6 +265,7 @@ class Database:
         res = await self.add_song(
             title, album_id, file_id, file_size, duration,
             artist_id=artist_id, track_no=track_no,
+            search_terms=search_terms,
         )
         return "added", await self.db.songs.find_one({"_id": res.inserted_id})
 
@@ -314,7 +318,12 @@ class Database:
         per_page = max(1, int(per_page or 8))
 
         base_match = {
-            "$or": [{"title": rx}, {"artist_name": rx}, {"album_name": rx}]
+            "$or": [
+                {"title": rx},
+                {"artist_name": rx},
+                {"album_name": rx},
+                {"search_terms": rx},
+            ]
         }
         pipeline = [
             {"$lookup": {"from": "artists", "localField": "artist_id",
@@ -370,6 +379,42 @@ class Database:
         elif artist_name:
             q["artist_name"] = artist_name
         return await self.db.songs.find_one(q)
+
+    async def backfill_translations(self, progress=None):
+        """Translate titles/artists/albums of existing songs into the other
+        language and store ``search_terms`` so both can be searched.
+
+        Idempotent: only songs that have no ``search_terms`` yet are processed.
+        Returns the number of songs updated.
+        """
+        from utils.translate import build_search_terms
+
+        cursor = self.db.songs.find({"$or": [
+            {"search_terms": {"$exists": False}},
+            {"search_terms": {"$size": 0}},
+        ]})
+        done = 0
+        async for song in cursor:
+            artist_name = ""
+            if song.get("artist_id") is not None:
+                a = await self.db.artists.find_one({"_id": song["artist_id"]})
+                if a:
+                    artist_name = a.get("name", "")
+            album_name = ""
+            if song.get("album_id") is not None:
+                al = await self.db.albums.find_one({"_id": song["album_id"]})
+                if al:
+                    album_name = al.get("name", "")
+            title = song.get("title", "")
+            terms = await build_search_terms(title, artist_name, album_name)
+            await self.update_song(song["_id"], search_terms=terms)
+            done += 1
+            if progress and done % 10 == 0:
+                try:
+                    await progress(done)
+                except Exception:
+                    pass
+        return done
 
     # ---------------- Users ----------------
     async def add_user(self, user_id, username, first_name):

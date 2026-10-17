@@ -150,6 +150,11 @@ TRANSLATIONS = {
         # -------- admin: general --------
         "a_nothing_pending": "⚠️ သီချင်း မပို့ရသေးပါ!",
         "a_no_flow": "ℹ️ လက်ရှိ တင်နေသည့် flow မရှိပါ။",
+        "a_bf_start": "🌐 ရှိပြီးသား သီချင်းများကို English ⇄ မြန်မာ ဘာသာပြန်နေပါသည်... ခဏစောင့်ပါ။",
+        "a_bf_progress": "🌐 ဘာသာပြန်နေသည်... ({n} ပုဒ် ပြီး)",
+        "a_bf_done": "✅ ဘာသာပြန် backfill ပြီးပါပြီ — {n} ပုဒ် update လုပ်ခဲ့သည်။",
+        "a_bf_none": "ℹ️ ဘာသာပြန်ရန် ကျန်သီချင်း မရှိပါ (အားလုံး ပြီးသားဖြစ်သည်)။",
+        "a_bf_failed": "❌ ဘာသာပြန် မအောင်မြင်ပါ: {err}",
         "a_add_cat_prompt": "➕ <b>အမျိုးအစား အမည် ရိုက်ထည့်ပါ:</b>",
         "a_add_cat_empty": "⚠️ ဦးစွာ အမျိုးအစားတစ်ခု ထည့်ပါ!",
         "a_choose_album_cat": "📀 <b>အယ်လ်ဘမ် ထည့်မည့် အမျိုးအစား ရွေးပါ:</b>",
@@ -381,6 +386,11 @@ TRANSLATIONS = {
         # -------- admin: general --------
         "a_nothing_pending": "⚠️ No songs sent yet!",
         "a_no_flow": "ℹ️ No active upload flow.",
+        "a_bf_start": "🌐 Translating existing songs (English ⇄ Myanmar)... please wait.",
+        "a_bf_progress": "🌐 Translating... ({n} done)",
+        "a_bf_done": "✅ Translation backfill complete — {n} songs updated.",
+        "a_bf_none": "ℹ️ Nothing to translate (all songs already done).",
+        "a_bf_failed": "❌ Translation failed: {err}",
         "a_add_cat_prompt": "➕ <b>Type the category name:</b>",
         "a_add_cat_empty": "⚠️ Add a category first!",
         "a_choose_album_cat": "📀 <b>Choose a category for the album:</b>",

@@ -10,6 +10,7 @@ from utils.formatters import split_caption
 from utils.converter import normalize_myanmar
 from utils.metadata import read_audio_metadata, pick_song_title, extract_track_no
 from utils.i18n import t, DEFAULT_LANG
+from utils.translate import build_search_terms
 
 router = Router()
 
@@ -110,6 +111,7 @@ async def on_channel_audio(message: Message):
             duration,
             artist_id=artist["_id"],
             track_no=extract_track_no(title),
+            search_terms=await build_search_terms(title, artist["name"], album_name),
         )
 
         if status == "skipped":

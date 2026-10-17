@@ -64,6 +64,18 @@ async def _keepalive_loop():
         await session.close()
 
 
+async def _translate_backfill_task():
+    """Translate existing songs (English <-> Myanmar) for bilingual search."""
+    try:
+        n = await db.backfill_translations()
+        if n:
+            logging.info("Translated %s song(s) for bilingual search", n)
+        else:
+            logging.info("Translation backfill: nothing to do")
+    except Exception:
+        logging.exception("Translation backfill failed")
+
+
 def validate_config():
     missing = []
     if not BOT_TOKEN:
@@ -125,6 +137,10 @@ async def main():
             logging.info("Moved %s album(s) into '%s'", moved, AUTO_CATEGORY)
 
     asyncio.create_task(_keepalive_loop())
+
+    # Translate existing songs (English <-> Myanmar) so both can be searched.
+    # Idempotent: only songs missing ``search_terms`` are processed.
+    asyncio.create_task(_translate_backfill_task())
 
     logging.info("Bot starting. Admins: %s", ADMIN_IDS)
 

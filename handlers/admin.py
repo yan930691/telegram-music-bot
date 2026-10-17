@@ -37,6 +37,7 @@ from utils.formatters import get_admin_panel_text, split_caption
 from utils.converter import normalize_myanmar
 from utils.metadata import read_audio_metadata, pick_song_title, extract_track_no
 from utils.i18n import t, get_lang
+from utils.translate import build_search_terms
 
 router = Router()
 admin_router = router  # all callbacks gated by is_admin check
@@ -79,6 +80,33 @@ async def done_command(message: Message, state: FSMContext):
             await _apply_finish_upload(message, state)
         else:
             await message.answer(t("a_no_flow", lang))
+
+
+@router.message(Command("backfilltranslate"))
+async def backfill_translate_command(message: Message):
+    if not await is_admin(message.from_user.id):
+        return
+    lang = await get_lang(message.from_user.id)
+    status_msg = await message.answer(t("a_bf_start", lang))
+    last = {"n": 0}
+
+    async def _progress(n):
+        last["n"] = n
+        try:
+            await status_msg.edit_text(t("a_bf_progress", lang, n=n))
+        except Exception:
+            pass
+
+    try:
+        done = await db.backfill_translations(progress=_progress)
+    except Exception as e:
+        logging.exception("backfill failed")
+        await status_msg.edit_text(t("a_bf_failed", lang, err=html.escape(str(e))))
+        return
+    if done == 0:
+        await status_msg.edit_text(t("a_bf_none", lang))
+    else:
+        await status_msg.edit_text(t("a_bf_done", lang, n=done))
 
 
 # ---------------- Admin menu ----------------
@@ -711,6 +739,7 @@ async def _apply_finish_upload(reply_target, state: FSMContext) -> bool:
             albums_order.append(album_name)
 
         track_no = extract_track_no(s["title"])
+        terms = await build_search_terms(s["title"], artist_name, album_name)
         status, _song = await db.save_song_dedup(
             s["title"],
             album["_id"],
@@ -719,6 +748,7 @@ async def _apply_finish_upload(reply_target, state: FSMContext) -> bool:
             s["duration"],
             artist_id=artist["_id"],
             track_no=track_no,
+            search_terms=terms,
         )
         if status == "skipped":
             skipped += 1
@@ -1018,8 +1048,11 @@ async def add_batch_song(message: Message, state: FSMContext):
         title = title.rsplit(".", 1)[0]
 
     track_no = extract_track_no(title)
+    artist_name = (album_doc or {}).get("artist", "") or ""
+    terms = await build_search_terms(title, artist_name, album_name)
     status, _song = await db.save_song_dedup(
-        title, album_id, file_id, file_size, duration, track_no=track_no
+        title, album_id, file_id, file_size, duration, track_no=track_no,
+        search_terms=terms,
     )
     count = data.get("song_count", 0) + 1
     await state.update_data(song_count=count, pending_title=None)

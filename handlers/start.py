@@ -70,7 +70,7 @@ async def help_handler(message: Message):
 async def menu_handler(message: Message):
     lang = await get_lang(message.from_user.id)
     await message.answer(
-        "🎵 Menu:" if lang == "en" else "🎵 မီနူး:",
+        get_welcome_text(lang),
         parse_mode="HTML",
         reply_markup=main_menu_kb(message.from_user.id in ADMIN_IDS, lang),
     )
@@ -143,7 +143,7 @@ async def show_categories(callback: CallbackQuery):
 async def back_to_main(callback: CallbackQuery):
     lang = await get_lang(callback.from_user.id)
     await callback.message.edit_text(
-        "🎵 Menu:" if lang == "en" else "🎵 မီနူး:",
+        get_welcome_text(lang),
         parse_mode="HTML",
         reply_markup=main_menu_kb(callback.from_user.id in ADMIN_IDS, lang),
     )
