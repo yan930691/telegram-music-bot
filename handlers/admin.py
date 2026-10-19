@@ -219,24 +219,33 @@ async def _run_channel_import(bot, status_msg, lang, admin_chat_id):
     total = len(ids)
     added = replaced = skipped = 0
     for i, mid in enumerate(ids, 1):
-        try:
-            # Forward to the admin's own chat so the Bot API hands us a usable
-            # file_id, then immediately delete the temporary forwarded copy.
-            fwd = await bot.forward_message(
-                chat_id=admin_chat_id, from_chat_id=CHANNEL_ID, message_id=mid)
-            st = await process_channel_audio(bot, fwd, notify=False)
-            if st == "added":
-                added += 1
-            elif st == "replaced":
-                replaced += 1
-            elif st == "skipped":
-                skipped += 1
+        for attempt in range(5):
             try:
-                await bot.delete_message(chat_id=admin_chat_id, message_id=fwd.message_id)
-            except Exception:
-                pass
-        except Exception:
-            logging.exception("Channel import failed for message %s", mid)
+                # Copy (not forward) to the admin's own chat so the Bot API
+                # hands us a usable file_id, then delete the temp copy. Copy
+                # avoids the visible "Forwarded from" header and is lighter.
+                fwd = await bot.copy_message(
+                    chat_id=admin_chat_id, from_chat_id=CHANNEL_ID, message_id=mid)
+                st = await process_channel_audio(bot, fwd, notify=False)
+                if st == "added":
+                    added += 1
+                elif st == "replaced":
+                    replaced += 1
+                elif st == "skipped":
+                    skipped += 1
+                try:
+                    await bot.delete_message(chat_id=admin_chat_id, message_id=fwd.message_id)
+                except Exception:
+                    pass
+                break
+            except Exception as e:
+                retry_after = getattr(e, "retry_after", None)
+                if retry_after:
+                    # Telegram flood limit: wait and retry the same message.
+                    await asyncio.sleep(int(retry_after) + 1)
+                    continue
+                logging.exception("Channel import failed for message %s", mid)
+                break
         if i % 10 == 0 or i == total:
             try:
                 await status_msg.edit_text(

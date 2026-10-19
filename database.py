@@ -14,6 +14,33 @@ DEFAULT_CATEGORIES = [
 # here so they are never invisible in the category browser.
 AUTO_CATEGORY = "အလိုအလျောက်"
 
+# Myanmar consonants in traditional alphabet order (က -> အ). Unicode codepoints
+# for these are already sequential, but we build an explicit index so sorting is
+# correct even when titles mix English/digits or start with other characters.
+_MM_CONSONANTS = (
+    "ကခဂဃငစဆဇဈဉညဋဌဍဎဏတထဒဓနပဖဗဘမယရလဝသဟဠအ"
+)
+
+
+def myanmar_sort_key(title: str):
+    """Sort key: Myanmar alphabet order (က->အ), same titles group together.
+
+    - Leading whitespace is ignored.
+    - A title starting with a Myanmar consonant sorts by that consonant's
+      alphabet position, so all "က..." titles come before "ခ..." etc.
+    - Non-Myanmar (English/digits) titles sort after Myanmar ones, by unicode.
+    - Exact-equal titles compare equal, so they sit next to each other.
+    """
+    s = (title or "").strip()
+    if not s:
+        return (2, "", "")
+    first = s[0]
+    idx = _MM_CONSONANTS.find(first)
+    if idx >= 0:
+        # Myanmar: sort by consonant position, then full string for grouping.
+        return (0, f"{idx:03d}", s)
+    return (1, s, s)
+
 
 class Database:
     def __init__(self):
@@ -194,19 +221,14 @@ class Database:
     # ---------------- Songs ----------------
     async def get_songs(self, album_id):
         songs = await self.db.songs.find({"album_id": album_id}).to_list(length=100)
-        # Natural order is unreliable; keep the album in the admin's track order.
-        # Numbered tracks sort first (by their number), then unnumbered by upload time.
-        songs.sort(
-            key=lambda s: (
-                s.get("track_no") is None,
-                s.get("track_no") or 0,
-                s.get("created_at"),
-            )
-        )
+        # Sort by Myanmar alphabet (က->အ); same titles naturally group together.
+        songs.sort(key=lambda s: myanmar_sort_key(s.get("title") or ""))
         return songs
 
     async def get_all_songs(self, limit=200):
-        return await self.db.songs.find().sort("title", 1).to_list(length=limit)
+        songs = await self.db.songs.find().to_list(length=limit)
+        songs.sort(key=lambda s: myanmar_sort_key(s.get("title") or ""))
+        return songs
 
     async def get_song(self, song_id):
         return await self.db.songs.find_one({"_id": song_id})
