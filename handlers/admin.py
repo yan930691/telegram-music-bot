@@ -215,11 +215,16 @@ async def _run_channel_import(bot, status_msg, lang, admin_chat_id):
             except Exception:
                 pass
             return
+        try:
+            await status_msg.edit_text(f"❌ Enumeration failed: {html.escape(msg)[:200]}", parse_mode="HTML")
+        except Exception:
+            pass
+        return
 
     total = len(ids)
     added = replaced = skipped = 0
     for i, mid in enumerate(ids, 1):
-        for attempt in range(5):
+        for attempt in range(10):
             try:
                 # Copy (not forward) to the admin's own chat so the Bot API
                 # hands us a usable file_id, then delete the temp copy. Copy
@@ -241,12 +246,21 @@ async def _run_channel_import(bot, status_msg, lang, admin_chat_id):
             except Exception as e:
                 retry_after = getattr(e, "retry_after", None)
                 if retry_after:
+                    wait_s = int(retry_after) + 2
+                    try:
+                        await status_msg.edit_text(
+                            t("a_imp_progress", lang, scanned=i, total=total,
+                              added=added, skipped=skipped) + f"\n⏳ Flood limit: {wait_s}s စောင့်နေသည် ({attempt+1}/10)",
+                            parse_mode="HTML"
+                        )
+                    except Exception:
+                        pass
                     # Telegram flood limit: wait and retry the same message.
-                    await asyncio.sleep(int(retry_after) + 1)
+                    await asyncio.sleep(wait_s)
                     continue
                 logging.exception("Channel import failed for message %s", mid)
                 break
-        if i % 10 == 0 or i == total:
+        if i % 3 == 0 or i == total:
             try:
                 await status_msg.edit_text(
                     t("a_imp_progress", lang, scanned=i, total=total,
