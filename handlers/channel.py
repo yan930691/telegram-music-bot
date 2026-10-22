@@ -28,12 +28,15 @@ async def _get_bot_id(bot):
     return _bot_id
 
 
-async def process_channel_audio(bot, message, notify=False):
+async def process_channel_audio(bot, message, notify=False, fast=False):
     """Extract and store one channel audio message into the database.
 
     Reusable by both the live ``channel_post`` handler and the historical
     import command. Returns one of: "added", "replaced", "skipped",
     "ignored", "error".
+
+    ``fast=True`` skips ID3 downloads and translation calls so a bulk import
+    of thousands of songs stays quick (search terms then use the raw names).
     """
     try:
         # Ignore messages posted by the bot itself (e.g. release announcements)
@@ -82,7 +85,7 @@ async def process_channel_audio(bot, message, notify=False):
 
         # Fill gaps from the file's embedded metadata (album is never sent by
         # Telegram, so MP3 ID3 tags are the only reliable source for it).
-        if not title or not performer or not album_name:
+        if not fast and (not title or not performer or not album_name):
             meta = await read_audio_metadata(bot, file_id, file_size)
             if not title and meta.get("title"):
                 title = meta["title"]
@@ -109,6 +112,13 @@ async def process_channel_audio(bot, message, notify=False):
             category_id=auto_cat["_id"] if auto_cat else None,
             artist_id=artist["_id"],
         )
+        if fast:
+            search_terms = sorted(
+                {v.strip().lower() for v in (title, artist["name"], album_name)
+                 if v and v.strip()}
+            )
+        else:
+            search_terms = await build_search_terms(title, artist["name"], album_name)
         status, _song = await db.save_song_dedup(
             title,
             album["_id"],
@@ -117,7 +127,7 @@ async def process_channel_audio(bot, message, notify=False):
             duration,
             artist_id=artist["_id"],
             track_no=extract_track_no(title),
-            search_terms=await build_search_terms(title, artist["name"], album_name),
+            search_terms=search_terms,
         )
 
         if notify:

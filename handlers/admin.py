@@ -145,7 +145,7 @@ async def _resolve_channel_peer(app, chat, on_wait=None):
     return chat
 
 
-async def _enumerate_channel_audio_ids(on_wait=None):
+async def _enumerate_channel_audio_ids(on_wait=None, on_progress=None):
     """List channel message ids that are audio, using MTProto (Pyrogram).
 
     The Bot API cannot read old channel history, and ``get_chat_history`` is
@@ -154,6 +154,7 @@ async def _enumerate_channel_audio_ids(on_wait=None):
     and keep the audio ones.
     """
     from pyrogram import Client
+    from pyrogram.errors import FloodWait
 
     # Numeric channel ids must be ints for MTProto; @usernames stay strings.
     chat = int(CHANNEL_ID) if str(CHANNEL_ID).lstrip("-").isdigit() else CHANNEL_ID
@@ -173,7 +174,22 @@ async def _enumerate_channel_audio_ids(on_wait=None):
         # (~1000 missing ids) so deleted gaps near the tail don't truncate us.
         while start <= 1_000_000:
             chunk = list(range(start, start + batch))
-            msgs = await app.get_messages(resolved, message_ids=chunk)
+            msgs = None
+            for _ in range(5):
+                try:
+                    msgs = await app.get_messages(resolved, message_ids=chunk)
+                    break
+                except FloodWait as e:
+                    await asyncio.sleep(int(e.value) + 2)
+                except Exception as e:
+                    logging.warning("get_messages(%s) failed: %s", start, e)
+                    break
+            if msgs is None:
+                start += batch
+                empty_streak += 1
+                if empty_streak >= 5:
+                    break
+                continue
             if not isinstance(msgs, list):
                 msgs = [msgs]
             found = False
@@ -190,13 +206,23 @@ async def _enumerate_channel_audio_ids(on_wait=None):
                     ids.append(m.id)
             empty_streak = 0 if found else empty_streak + 1
             start += batch
+            if on_progress:
+                try:
+                    await on_progress(start - 1, len(ids))
+                except Exception:
+                    pass
             if empty_streak >= 5:
                 break
     return ids
 
 
 async def _run_channel_import(bot, status_msg, lang, admin_chat_id):
+    from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
+
     from handlers.channel import process_channel_audio
+
+    loop = asyncio.get_running_loop()
+    last_edit = [0.0]
 
     async def _on_wait():
         try:
@@ -204,8 +230,21 @@ async def _run_channel_import(bot, status_msg, lang, admin_chat_id):
         except Exception:
             pass
 
+    async def _enum_progress(scanned, found):
+        now = loop.time()
+        if now - last_edit[0] < 5:
+            return
+        last_edit[0] = now
+        try:
+            await status_msg.edit_text(
+                t("a_imp_start", lang) + f"\n\n🔍 id {scanned:,} | 🎵 {found:,}",
+                parse_mode="HTML")
+        except Exception:
+            pass
+
     try:
-        ids = await _enumerate_channel_audio_ids(on_wait=_on_wait)
+        ids = await _enumerate_channel_audio_ids(
+            on_wait=_on_wait, on_progress=_enum_progress)
     except Exception as e:
         logging.exception("Channel enumeration failed")
         msg = str(e)
@@ -222,56 +261,94 @@ async def _run_channel_import(bot, status_msg, lang, admin_chat_id):
         return
 
     total = len(ids)
-    added = replaced = skipped = 0
-    for i, mid in enumerate(ids, 1):
-        for attempt in range(10):
+    if total == 0:
+        try:
+            await status_msg.edit_text(t("a_imp_done", lang, scanned=0, added=0,
+                                         replaced=0, skipped=0), parse_mode="HTML")
+        except Exception:
+            pass
+        return
+
+    added = replaced = skipped = ignored = errors = 0
+    pending_deletes = []
+
+    async def _flush_deletes():
+        while pending_deletes:
+            chunk = pending_deletes[:100]
             try:
-                # Copy (not forward) to the admin's own chat so the Bot API
-                # hands us a usable file_id, then delete the temp copy. Copy
-                # avoids the visible "Forwarded from" header and is lighter.
-                fwd = await bot.copy_message(
+                await bot.delete_messages(chat_id=admin_chat_id, message_ids=chunk)
+            except Exception:
+                pass
+            del pending_deletes[:len(chunk)]
+
+    async def _report(i, force=False):
+        now = loop.time()
+        if not force and now - last_edit[0] < 3:
+            return
+        last_edit[0] = now
+        try:
+            await status_msg.edit_text(
+                t("a_imp_progress", lang, scanned=i, total=total,
+                  added=added, skipped=skipped)
+                + f"\n♻️ {replaced} | ⏭ {ignored} | ⚠️ {errors}",
+                parse_mode="HTML")
+        except Exception:
+            pass
+
+    for i, mid in enumerate(ids, 1):
+        for attempt in range(8):
+            try:
+                # Forward (not copy) because forward_message returns the new
+                # Message; copy_message only returns a MessageId, which has no
+                # .audio/.document and silently imported nothing.
+                fwd = await bot.forward_message(
                     chat_id=admin_chat_id, from_chat_id=CHANNEL_ID, message_id=mid)
-                st = await process_channel_audio(bot, fwd, notify=False)
+                pending_deletes.append(fwd.message_id)
+                st = await process_channel_audio(bot, fwd, notify=False, fast=True)
                 if st == "added":
                     added += 1
                 elif st == "replaced":
                     replaced += 1
                 elif st == "skipped":
                     skipped += 1
+                elif st == "ignored":
+                    ignored += 1
+                else:
+                    errors += 1
+                break
+            except TelegramRetryAfter as e:
+                wait_s = int(e.retry_after) + 2
                 try:
-                    await bot.delete_message(chat_id=admin_chat_id, message_id=fwd.message_id)
+                    await status_msg.edit_text(
+                        t("a_imp_progress", lang, scanned=i, total=total,
+                          added=added, skipped=skipped)
+                        + f"\n⏳ Flood limit: {wait_s}s ({attempt+1}/8)",
+                        parse_mode="HTML")
                 except Exception:
                     pass
+                await asyncio.sleep(wait_s)
+                continue
+            except TelegramBadRequest as e:
+                errors += 1
+                logging.warning("Channel import skipped %s: %s", mid, e)
                 break
             except Exception as e:
-                retry_after = getattr(e, "retry_after", None)
-                if retry_after:
-                    wait_s = int(retry_after) + 2
-                    try:
-                        await status_msg.edit_text(
-                            t("a_imp_progress", lang, scanned=i, total=total,
-                              added=added, skipped=skipped) + f"\n⏳ Flood limit: {wait_s}s စောင့်နေသည် ({attempt+1}/10)",
-                            parse_mode="HTML"
-                        )
-                    except Exception:
-                        pass
-                    # Telegram flood limit: wait and retry the same message.
-                    await asyncio.sleep(wait_s)
-                    continue
-                logging.exception("Channel import failed for message %s", mid)
+                errors += 1
+                logging.warning("Channel import failed for %s: %s", mid, e)
+                await asyncio.sleep(1)
                 break
-        if i % 3 == 0 or i == total:
-            try:
-                await status_msg.edit_text(
-                    t("a_imp_progress", lang, scanned=i, total=total,
-                      added=added, skipped=skipped))
-            except Exception:
-                pass
+        if len(pending_deletes) >= 50:
+            await _flush_deletes()
+        await _report(i)
 
+    await _flush_deletes()
+    await _report(total, force=True)
     try:
         await status_msg.edit_text(
             t("a_imp_done", lang, scanned=total, added=added,
-              replaced=replaced, skipped=skipped))
+              replaced=replaced, skipped=skipped)
+            + f"\n♻️ Replaced: {replaced} | ⏭ Ignored: {ignored} | ⚠️ Failed: {errors}",
+            parse_mode="HTML")
     except Exception:
         pass
 
