@@ -113,6 +113,7 @@ async def backfill_translate_command(message: Message):
 
 
 _bg_tasks = set()
+_import_task = None
 
 
 async def _resolve_channel_peer(app, chat, on_wait=None):
@@ -164,6 +165,7 @@ async def _enumerate_channel_audio_ids(on_wait=None, on_progress=None):
         api_id=int(TG_API_ID),
         api_hash=TG_API_HASH,
         bot_token=BOT_TOKEN,
+        in_memory=True,
     )
     async with app:
         resolved = await _resolve_channel_peer(app, chat, on_wait=on_wait)
@@ -355,6 +357,7 @@ async def _run_channel_import(bot, status_msg, lang, admin_chat_id):
 
 @router.message(Command("importchannel"))
 async def import_channel_command(message: Message):
+    global _import_task
     if not await is_admin(message.from_user.id):
         return
     lang = await get_lang(message.from_user.id)
@@ -364,11 +367,14 @@ async def import_channel_command(message: Message):
     if not (TG_API_ID and TG_API_HASH):
         await message.answer(t("a_imp_no_creds", lang), parse_mode="HTML")
         return
+    if _import_task is not None and not _import_task.done():
+        await message.answer("⏳ Import already running. Please wait — လက်ရှိ import လုပ်နေဆဲပါ။")
+        return
     status_msg = await message.answer(t("a_imp_start", lang))
-    task = asyncio.create_task(
+    _import_task = asyncio.create_task(
         _run_channel_import(message.bot, status_msg, lang, message.chat.id))
-    _bg_tasks.add(task)
-    task.add_done_callback(_bg_tasks.discard)
+    _bg_tasks.add(_import_task)
+    _import_task.add_done_callback(_bg_tasks.discard)
 
 
 # ---------------- Admin menu ----------------
