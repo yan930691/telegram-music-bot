@@ -102,7 +102,10 @@ async def link_handler(message: Message):
     path = None
     is_audio = any(x in lower for x in ("music", "audio", "mp3"))
     try:
-        wait = await message.reply_text("⬇️ ဒေါင်းလုပ်နေပါသည်...")
+        try:
+            wait = await message.answer("⬇️ ဒေါင်းလုပ်နေပါသည်...")
+        except Exception:
+            wait = None
         if is_audio:
             path = await _download_audio(url)
         else:
@@ -112,7 +115,15 @@ async def link_handler(message: Message):
                 try:
                     await wait.edit_text("❌ ဒေါင်းမရပါ။ Link ကို စစ်ဆေးပေးပါ။")
                 except Exception:
-                    await message.reply_text("❌ ဒေါင်းမရပါ။ Link ကို စစ်ဆေးပေးပါ။")
+                    try:
+                        await message.answer("❌ ဒေါင်းမရပါ။ Link ကို စစ်ဆေးပေးပါ။")
+                    except Exception:
+                        pass
+            else:
+                try:
+                    await message.answer("❌ ဒေါင်းမရပါ။ Link ကို စစ်ဆေးပေးပါ။")
+                except Exception:
+                    pass
             return
         if path.endswith(".mp3"):
             if wait:
@@ -137,9 +148,18 @@ async def link_handler(message: Message):
         logger.exception("download send failed")
         try:
             if wait:
-                await wait.edit_text(f"❌ အမှားဖြစ်သွားပါသည်: {html_escape(str(e)[:150])}")
+                try:
+                    await wait.edit_text(f"❌ အမှားဖြစ်သွားပါသည်: {html_escape(str(e)[:150])}")
+                except Exception:
+                    try:
+                        await message.answer(f"❌ အမှားဖြစ်သွားပါသည်: {html_escape(str(e)[:150])}")
+                    except Exception:
+                        pass
             else:
-                await message.reply_text(f"❌ အမှားဖြစ်သွားပါသည်: {html_escape(str(e)[:150])}")
+                try:
+                    await message.answer(f"❌ အမှားဖြစ်သွားပါသည်: {html_escape(str(e)[:150])}")
+                except Exception:
+                    pass
         except Exception:
             pass
     finally:
