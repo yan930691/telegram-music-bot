@@ -89,16 +89,15 @@ async def _download_audio(url: str) -> str | None:
         return None
 
 
-@router.message(F.text | F.caption)
+@router.message(F.text)
 async def link_handler(message: Message):
     if message.chat.type != ChatType.PRIVATE:
         return
-    text = message.text or message.caption or ""
+    text = message.text or ""
     url = _extract_url(text)
     if not url:
         return
     lower = url.lower()
-    # skip audd/shazam style? download media
     wait = await message.reply_text("⬇️ ဒေါင်းလုပ်နေပါသည်...")
     path = None
     is_audio = any(x in lower for x in ("music", "audio"))
@@ -116,7 +115,10 @@ async def link_handler(message: Message):
         else:
             await wait.edit_text("📤 ပို့နေပါသည်...")
             await message.reply_video(FSInputFile(path))
-        await wait.delete()
+        try:
+            await wait.delete()
+        except Exception:
+            pass
     except Exception as e:
         logger.exception("download send failed")
         try:
