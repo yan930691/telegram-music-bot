@@ -100,12 +100,19 @@ def _fmt_res(r: dict) -> str:
 
 async def _handle_audio_message(message: Message, bot: Bot):
     if not AUDD_API_KEY:
-        await message.reply_text("❌ AUDD_API_KEY မသတ်မှတ်ရသေးပါ။")
+        try:
+            await message.answer("❌ AUDD_API_KEY မသတ်မှတ်ရသေးပါ။")
+        except Exception:
+            pass
         return
     src = None
     dst = None
+    wait = None
     try:
-        wait = await message.reply_text("🔍 သီချင်းကို ရှာနေပါသည်...")
+        try:
+            wait = await message.answer("🔍 သီချင်းကို ရှာနေပါသည်...")
+        except Exception:
+            wait = None
         if message.voice:
             fid = message.voice.file_id
         elif message.audio:
@@ -115,21 +122,49 @@ async def _handle_audio_message(message: Message, bot: Bot):
         elif message.video:
             fid = message.video.file_id
         else:
-            await wait.edit_text("ရှာဖွေနိုင်တဲ့ အသံ/ဗီဒီယိုကို ပို့ပေးပါ။")
+            if wait:
+                try:
+                    await wait.edit_text("ရှာဖွေနိုင်တဲ့ အသံ/ဗီဒီယိုကို ပို့ပေးပါ။")
+                except Exception:
+                    pass
             return
         src = tempfile.mktemp(suffix=".bin")
         if not await _download(bot, fid, src):
-            await wait.edit_text("❌ ဖိုင်ဒေါင်းမရပါ။")
+            if wait:
+                try:
+                    await wait.edit_text("❌ ဖိုင်ဒေါင်းမရပါ။")
+                except Exception:
+                    pass
             return
         dst = tempfile.mktemp(suffix=".mp3")
         if not await _extract_audio(src, dst):
-            await wait.edit_text("❌ အသံထုတ်လို့မရပါ။")
+            if wait:
+                try:
+                    await wait.edit_text("❌ အသံထုတ်လို့မရပါ။")
+                except Exception:
+                    pass
             return
         res = await _recognize_file(dst)
         if not res:
-            await wait.edit_text("❌ သီချင်းမတွေ့ပါ။ နောက်တစ်ကြိမ် ထပ်စမ်းကြည့်ပါ။")
+            if wait:
+                try:
+                    await wait.edit_text("❌ သီချင်းမတွေ့ပါ။ နောက်တစ်ကြိမ် ထပ်စမ်းကြည့်ပါ။")
+                except Exception:
+                    pass
             return
-        await wait.edit_text(_fmt_res(res), disable_web_page_preview=True)
+        if wait:
+            try:
+                await wait.edit_text(_fmt_res(res), disable_web_page_preview=True)
+            except Exception:
+                try:
+                    await message.answer(_fmt_res(res), disable_web_page_preview=True)
+                except Exception:
+                    pass
+        else:
+            try:
+                await message.answer(_fmt_res(res), disable_web_page_preview=True)
+            except Exception:
+                pass
     finally:
         for p in (src, dst):
             if p and os.path.exists(p):
