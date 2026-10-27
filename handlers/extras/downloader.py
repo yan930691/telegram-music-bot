@@ -98,38 +98,59 @@ async def link_handler(message: Message):
     if not url:
         return
     lower = url.lower()
-    wait = await message.reply_text("⬇️ ဒေါင်းလုပ်နေပါသည်...")
+    wait = None
     path = None
     is_audio = any(x in lower for x in ("music", "audio"))
     try:
+        wait = await message.reply_text("⬇️ ဒေါင်းလုပ်နေပါသည်...")
         if is_audio:
             path = await _download_audio(url)
         else:
             path = await _download_media(url)
         if not path or not os.path.exists(path):
-            await wait.edit_text("❌ ဒေါင်းမရပါ။ Link ကို စစ်ဆေးပေးပါ။")
+            if wait:
+                try:
+                    await wait.edit_text("❌ ဒေါင်းမရပါ။ Link ကို စစ်ဆေးပေးပါ။")
+                except Exception:
+                    await message.reply_text("❌ ဒေါင်းမရပါ။ Link ကို စစ်ဆေးပေးပါ။")
             return
         if path.endswith(".mp3"):
-            await wait.edit_text("📤 ပို့နေပါသည်...")
+            if wait:
+                try:
+                    await wait.edit_text("📤 ပို့နေပါသည်...")
+                except Exception:
+                    pass
             await message.reply_audio(FSInputFile(path))
         else:
-            await wait.edit_text("📤 ပို့နေပါသည်...")
-            await message.reply_video(FSInputFile(path))
-        try:
-            await wait.delete()
-        except Exception:
-            pass
+            if wait:
+                try:
+                    await wait.edit_text("📤 ပို့နေပါသည်...")
+                except Exception:
+                    pass
+            await message.reply_video(FSInputFile(path), supports_streaming=True)
+        if wait:
+            try:
+                await wait.delete()
+            except Exception:
+                pass
     except Exception as e:
         logger.exception("download send failed")
         try:
-            await wait.edit_text(f"❌ အမှားဖြစ်သွားပါသည်: {html_escape(str(e)[:120])}")
+            if wait:
+                await wait.edit_text(f"❌ အမှားဖြစ်သွားပါသည်: {html_escape(str(e)[:150])}")
+            else:
+                await message.reply_text(f"❌ အမှားဖြစ်သွားပါသည်: {html_escape(str(e)[:150])}")
         except Exception:
             pass
     finally:
         if path and os.path.exists(path):
             try:
                 os.remove(path)
-                os.rmdir(os.path.dirname(path))
+                d = os.path.dirname(path)
+                try:
+                    os.rmdir(d)
+                except Exception:
+                    pass
             except Exception:
                 pass
 
