@@ -56,6 +56,20 @@ async def handle_text_message(message: Message):
     await perform_search(message, text)
 
 
+@router.message(F.text & ~F.text.startswith("/") & (F.chat.type == ChatType.PRIVATE))
+async def fallback_plain_search(message: Message):
+    if not message.text:
+        return
+    text = message.text.strip()
+    if not text:
+        return
+    if text.lower().startswith("http://") or text.lower().startswith("https://"):
+        return
+    user_id = message.from_user.id
+    SEARCHING_USERS.discard(user_id)
+    await perform_search(message, text)
+
+
 async def _song_results(user_id, lang, query, page):
     songs, total = await db.search_songs_page(query, page=page, per_page=PER_PAGE)
     pages = max(1, (total + PER_PAGE - 1) // PER_PAGE)
