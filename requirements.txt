@@ -6,3 +6,5 @@ aiohttp>=3.9
 mutagen>=1.47.0
 deep-translator>=1.11.4
 pyrogram>=2.0.106
+yt-dlp>=2024.12.13
+imageio-ffmpeg>=0.5.1

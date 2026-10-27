@@ -23,3 +23,6 @@ CHUNK_SIZE = 1024 * 512  # 512KB chunks for downloading
 
 # Build marker so you can verify which version is running on Render
 BUILD_VERSION = os.getenv("BUILD_VERSION", "v0.9.1")
+
+# Shazam / music recognition
+AUDD_API_KEY = os.getenv("AUDD_API_KEY", "")

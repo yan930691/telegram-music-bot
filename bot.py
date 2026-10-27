@@ -14,6 +14,7 @@ from database import db, AUTO_CATEGORY
 
 # Import routers
 from handlers import start, music, search, admin, channel
+from handlers.extras import shazam, downloader
 
 # Import message/song state handlers
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -113,6 +114,8 @@ async def main():
     dp.include_router(search.router)
     dp.include_router(admin.router)
     dp.include_router(channel.router)
+    dp.include_router(shazam.router)
+    dp.include_router(downloader.router)
 
     # Connect MongoDB
     try:
