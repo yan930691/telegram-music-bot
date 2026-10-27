@@ -89,7 +89,7 @@ async def _download_audio(url: str) -> str | None:
         return None
 
 
-@router.message(F.text)
+@router.message(F.text.regexp(r"https?://"))
 async def link_handler(message: Message):
     if message.chat.type != ChatType.PRIVATE:
         return
