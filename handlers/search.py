@@ -56,7 +56,7 @@ async def handle_text_message(message: Message):
     await perform_search(message, text)
 
 
-@router.message(F.text & ~F.text.startswith("/") & (F.chat.type == ChatType.PRIVATE))
+@router.message(F.text & ~F.text.startswith("/"), F.chat.type == "private")
 async def fallback_plain_search(message: Message):
     if not message.text:
         return
