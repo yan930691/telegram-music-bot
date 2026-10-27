@@ -100,7 +100,7 @@ async def link_handler(message: Message):
     lower = url.lower()
     wait = None
     path = None
-    is_audio = any(x in lower for x in ("music", "audio"))
+    is_audio = any(x in lower for x in ("music", "audio", "mp3"))
     try:
         wait = await message.reply_text("⬇️ ဒေါင်းလုပ်နေပါသည်...")
         if is_audio:
