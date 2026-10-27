@@ -110,12 +110,12 @@ async def main():
 
     # Register routers
     dp.include_router(start.router)
+    dp.include_router(downloader.router)
+    dp.include_router(shazam.router)
     dp.include_router(music.router)
     dp.include_router(search.router)
     dp.include_router(admin.router)
     dp.include_router(channel.router)
-    dp.include_router(shazam.router)
-    dp.include_router(downloader.router)
 
     # Connect MongoDB
     try:
