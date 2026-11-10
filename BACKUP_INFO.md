@@ -37,12 +37,29 @@
 - `AUDD_API_KEY` — audd.io API key (သီချင်းဖော်ထုတ်ခြင်းအတွက်)
 - `BUILD_VERSION` — (optional)
 
+## MongoDB Data Backup (သီချင်းစာရင်း data)
+
+- ဖိုင်: `mongo-data-backup-2026-11-11.json` — **repo/GitHub မှာ မတင်ရ၊ local မှာသာ သိမ်းထားပါ** (zip backup ထဲ ပါဝင်သည်)
+- ပါဝင်သည်:
+  - `music_bot` — songs 813, albums 78, artists 80, categories 9, users 4, pending_uploads 1 (Bot ရဲ့ data အဓိက)
+  - `myanmar_music` — albums 1 (အရင်က စမ်းသပ်ခဲ့တာ)
+  - `music_catalog_db` — categories 3, content_types 5, contents 0 (တခြား project)
+- **ပြန်ထည့်နည်း** (cluster အသစ်/ဘေးမှာ data ပျက်သွားရင်):
+
+```
+python restore_db.py "<MONGODB_URI>" mongo-data-backup-2026-11-11.json
+```
+
+- ပုံမှန်အားဖြင့် collection မှာ data ရှိနေရင် skip မယ်။ အလုံးလုံး အစားထိုးချင်ရင် နောက်ဆုံးမှာ `--force` ထည့်ပေးပါ။
+- Note — backup ထဲမှာ datetime/ObjectId တွေက string ဖြစ်နေမယ် (ဘေးဖြစ်စဉ် ပြန်ထူးတာအတွက် လုံလောက်ပါတယ်)
+
 ## ပြန်ထူးနည်း (Restore)
 
 1. ဒီ backup ကို unzip လုပ် (ဒါမှမဟုတ် `git clone https://github.com/yan930691/telegram-music-bot.git`)
 2. `pip install -r requirements.txt`
 3. အထက်ပါ env variables တွေ သတ်မှတ်ပေး (`.env` ဖိုင် ဒါမှမဟုတ် Render Environment)
-4. `python bot.py`
+4. (data ပျက်နေရင်) `python restore_db.py "<MONGODB_URI>" mongo-data-backup-<date>.json`
+5. `python bot.py`
 
 ## Render မှာ Deploy နည်း
 
