@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import random
 import re
 import shutil
 import tempfile
@@ -26,6 +27,13 @@ BLOGGER_PAGE = 500
 AUDIO_EXTS = (".mp3", ".m4a", ".flac", ".ogg", ".wav")
 DAILY_LIMIT = int(os.getenv("BLOG_DAILY_LIMIT", "10"))
 
+# ⬇️⬇️⬇️ NEW: Proxy configuration
+PROXY_LIST_URL = "https://cdn.jsdelivr.net/gh/proxyscrape/free-proxy-list@main/proxies/all/data.json"
+# သင့်ကိုယ်ပိုင် proxy ရှိရင် ဒီမှာ ထည့်ပါ (ဥပမာ - "http://user:pass@host:port")
+CUSTOM_PROXY = os.getenv("BLOG_PROXY_URL", "").strip()
+PROXY_TIMEOUT = 10
+# ⬆️⬆️⬆️ NEW
+
 
 def _safe_decode(raw: bytes) -> str:
     for enc in ("utf-8", "cp1252", "latin-1"):
@@ -34,6 +42,70 @@ def _safe_decode(raw: bytes) -> str:
         except UnicodeDecodeError:
             continue
     return raw.decode("utf-8", errors="ignore")
+
+
+# ⬇️⬇️⬇️ NEW: Proxy helpers
+async def fetch_proxy_list(session: aiohttp.ClientSession) -> list[dict]:
+    """Download a fresh list of free proxies."""
+    try:
+        async with session.get(
+            PROXY_LIST_URL,
+            timeout=aiohttp.ClientTimeout(total=30),
+        ) as r:
+            data = await r.json(content_type=None)
+        proxies = data.get("proxies", data) if isinstance(data, dict) else data
+        if isinstance(proxies, list):
+            log.info("Loaded %d free proxies", len(proxies))
+            return proxies
+    except Exception as e:
+        log.warning("Failed to fetch proxy list: %s", e)
+    return []
+
+
+async def test_proxy(proxy: dict, target_url: str = "https://www.mediafire.com") -> bool:
+    """Quickly test if a proxy works by hitting MediaFire."""
+    proxy_url = proxy.get("proxy") or f"{proxy['protocol']}://{proxy['ip']}:{proxy['port']}"
+    try:
+        connector = aiohttp.TCPConnector(ssl=False)
+        async with aiohttp.ClientSession(connector=connector) as session:
+            async with session.get(
+                target_url,
+                proxy=proxy_url,
+                headers={"User-Agent": USER_AGENT},
+                timeout=aiohttp.ClientTimeout(total=PROXY_TIMEOUT),
+                allow_redirects=True,
+            ) as r:
+                return r.status == 200
+    except Exception:
+        return False
+
+
+async def find_working_proxy() -> str | None:
+    """Try free proxies until one works. Returns proxy URL or None."""
+    if CUSTOM_PROXY:
+        log.info("Using custom proxy from env: %s", CUSTOM_PROXY.split("@")[-1])
+        return CUSTOM_PROXY
+
+    async with aiohttp.ClientSession() as session:
+        proxies = await fetch_proxy_list(session)
+
+    if not proxies:
+        log.warning("No free proxies available")
+        return None
+
+    random.shuffle(proxies)
+    # Try max 20 proxies
+    for i, proxy in enumerate(proxies[:20], 1):
+        proxy_url = proxy.get("proxy") or f"{proxy['protocol']}://{proxy['ip']}:{proxy['port']}"
+        log.info("Testing proxy %d/20: %s", i, proxy_url.split("@")[-1])
+        if await test_proxy(proxy):
+            log.info("  ✓ working proxy found: %s", proxy_url.split("@")[-1])
+            return proxy_url
+        await asyncio.sleep(1)
+
+    log.warning("No working proxy found after trying 20")
+    return None
+# ⬆️⬆️⬆️ NEW
 
 
 class BlogAutoPoster:
@@ -45,6 +117,7 @@ class BlogAutoPoster:
         self._seen: set[str] = set()
         self._lock = asyncio.Lock()
         self._running = False
+        self._proxy_url: str | None = None
 
     @property
     def is_running(self) -> bool:
@@ -55,7 +128,6 @@ class BlogAutoPoster:
         log.info("Loaded %d seen posts", len(self._seen))
 
     async def reload_seen(self):
-        """Reload the seen set from DB (after reset_seen)."""
         self._seen = await self.state.load_all()
         log.info("Reloaded %d seen posts", len(self._seen))
 
@@ -65,6 +137,7 @@ class BlogAutoPoster:
             "seen_count": await self.state.seen_count(),
             "daily_limit": DAILY_LIMIT,
             "running": self._running,
+            "proxy": self._proxy_url.split("@")[-1] if self._proxy_url else None,
         }
 
     # ---------- batch processing ----------
@@ -89,11 +162,20 @@ class BlogAutoPoster:
                 "limit": DAILY_LIMIT,
             }
 
+        # ⬇️⬇️⬇️ NEW: Find a working proxy before starting batch
+        log.info("Searching for a working proxy...")
+        self._proxy_url = await find_working_proxy()
+        if not self._proxy_url:
+            log.warning("No proxy available — MediaFire may block requests")
+        else:
+            log.info("Batch will use proxy: %s", self._proxy_url.split("@")[-1])
+        # ⬆️⬆️⬆️ NEW
+
         remaining = DAILY_LIMIT - used
         batch_size = min(count, remaining)
 
         entries = await self._fetch_all_entries()
-        entries.reverse()  # oldest first
+        entries.reverse()
         unprocessed = [
             e for e in entries
             if e.get("link") and e["link"] not in self._seen
@@ -114,7 +196,9 @@ class BlogAutoPoster:
         )
 
         processed = failed = 0
-        async with aiohttp.ClientSession() as session:
+        # ⬇️⬇️⬇️ NEW: pass proxy to session
+        connector = aiohttp.TCPConnector(ssl=False) if self._proxy_url else None
+        async with aiohttp.ClientSession(connector=connector) as session:
             for i, entry in enumerate(unprocessed, 1):
                 title = entry.get("title", "?")
                 log.info("[%d/%d] %s", i, len(unprocessed), title)
@@ -122,14 +206,12 @@ class BlogAutoPoster:
                 try:
                     ok = await self._handle_entry(session, entry)
                     if ok:
-                        # ✅ Success: mark as seen + count toward daily
                         self._seen.add(entry["link"])
                         await self.state.mark(entry["link"])
                         await self.state.increment_daily()
                         processed += 1
                         log.info("  ✓ entry posted successfully")
                     else:
-                        # ❌ Failed: don't mark, don't count → will retry
                         failed += 1
                         log.warning("  ✗ entry failed (will retry next batch)")
                 except Exception:
@@ -137,6 +219,7 @@ class BlogAutoPoster:
                     failed += 1
 
                 await asyncio.sleep(5)
+        # ⬆️⬆️⬆️ NEW
 
         return {
             "ok": True,
@@ -262,6 +345,7 @@ class BlogAutoPoster:
                         "User-Agent": USER_AGENT,
                         "Accept-Encoding": "identity",
                     },
+                    proxy=self._proxy_url,
                     timeout=30,
                 ) as r:
                     raw = await r.read()
@@ -339,7 +423,7 @@ class BlogAutoPoster:
         log.info("  folder done: %d posted", posted)
         return posted > 0
 
-    # ---------- MediaFire direct link (encoding-safe) ----------
+    # ---------- MediaFire direct link (proxy-aware) ----------
     async def _resolve_mediafire_file(self, session, quickkey) -> str | None:
         # Strategy 1: API
         try:
@@ -354,6 +438,7 @@ class BlogAutoPoster:
                     "User-Agent": USER_AGENT,
                     "Accept-Encoding": "identity",
                 },
+                proxy=self._proxy_url,
                 timeout=30,
             ) as r:
                 raw = await r.read()
@@ -382,7 +467,12 @@ class BlogAutoPoster:
                 "Accept-Encoding": "identity",
                 "Referer": "https://www.mediafire.com/",
             }
-            async with session.get(url, headers=headers, timeout=30) as r:
+            async with session.get(
+                url,
+                headers=headers,
+                proxy=self._proxy_url,
+                timeout=30,
+            ) as r:
                 status = r.status
                 content_type = r.headers.get("Content-Type", "?")
                 raw = await r.read()
@@ -431,7 +521,7 @@ class BlogAutoPoster:
 
         return None
 
-    # ---------- download + send ----------
+    # ---------- download + send (proxy-aware download) ----------
     async def _send_single(
         self, session, title, direct_url, cover_path,
         album=None, source_link=None,
@@ -443,6 +533,7 @@ class BlogAutoPoster:
                 async with session.get(
                     direct_url,
                     headers={"User-Agent": USER_AGENT},
+                    proxy=self._proxy_url,
                     timeout=aiohttp.ClientTimeout(total=600),
                 ) as r:
                     r.raise_for_status()
