@@ -19,6 +19,10 @@ from handlers.extras import shazam, downloader
 # Import message/song state handlers
 from aiogram.fsm.storage.memory import MemoryStorage
 
+# ⬇️⬇️⬇️ NEW: Blog auto-poster import
+from services.blog_auto_poster import BlogAutoPoster
+# ⬆️⬆️⬆️ NEW
+
 logging.basicConfig(level=logging.INFO, stream=sys.stdout,
                     format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
@@ -144,6 +148,29 @@ async def main():
     # Translate existing songs (English <-> Myanmar) so both can be searched.
     # Idempotent: only songs missing ``search_terms`` are processed.
     asyncio.create_task(_translate_backfill_task())
+
+    # ⬇️⬇️⬇️ NEW: Blog auto-poster start
+    auto_channel = os.getenv("AUTO_POST_CHANNEL_ID", "").strip()
+    if auto_channel:
+        try:
+            ch_id = int(auto_channel)
+        except ValueError:
+            ch_id = auto_channel
+        _poster = BlogAutoPoster(
+            bot=bot,
+            channel_id=ch_id,
+            rss_url=os.getenv(
+                "BLOG_RSS_URL",
+                "https://phyuniwarpyar.blogspot.com/feeds/posts/default?alt=rss",
+            ),
+            interval=int(os.getenv("AUTO_POST_INTERVAL", "1800")),
+            bulk_mode=os.getenv("BLOG_BULK_MODE", "0") == "1",
+        )
+        asyncio.create_task(_poster.run())
+        logging.info("Blog poster -> %s (bulk=%s)", ch_id, _poster.bulk_mode)
+    else:
+        logging.info("Blog poster disabled (AUTO_POST_CHANNEL_ID not set)")
+    # ⬆️⬆️⬆️ NEW
 
     logging.info("Bot starting. Admins: %s", ADMIN_IDS)
 
