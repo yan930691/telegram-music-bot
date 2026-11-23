@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import os
 import re
@@ -24,6 +25,16 @@ MAX_TG_SIZE = int(os.getenv("MAX_TG_SIZE_MB", "50")) * 1024 * 1024
 BLOGGER_PAGE = 500
 AUDIO_EXTS = (".mp3", ".m4a", ".flac", ".ogg", ".wav")
 DAILY_LIMIT = int(os.getenv("BLOG_DAILY_LIMIT", "10"))
+
+
+def _safe_decode(raw: bytes) -> str:
+    """Try multiple encodings before falling back to ignore."""
+    for enc in ("utf-8", "cp1252", "latin-1"):
+        try:
+            return raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("utf-8", errors="ignore")
 
 
 class BlogAutoPoster:
@@ -65,7 +76,6 @@ class BlogAutoPoster:
                 self._running = False
 
     async def _process_batch_inner(self, count: int) -> dict:
-        # check daily limit
         used = await self.state.get_daily_count()
         if used >= DAILY_LIMIT:
             return {
@@ -78,7 +88,6 @@ class BlogAutoPoster:
         remaining = DAILY_LIMIT - used
         batch_size = min(count, remaining)
 
-        # fetch oldest unprocessed posts
         entries = await self._fetch_all_entries()
         entries.reverse()  # oldest first
         unprocessed = [
@@ -150,7 +159,6 @@ class BlogAutoPoster:
         title = entry.get("title", "Untitled")
         source_link = entry.get("link", "")
 
-        # Get HTML - try summary first, fallback to fetching post page
         summary = entry.get("summary", "") or ""
         if not summary and entry.get("content"):
             summary = entry["content"][0].get("value", "")
@@ -167,7 +175,8 @@ class BlogAutoPoster:
                     timeout=30,
                 ) as r:
                     if r.status == 200:
-                        html = await r.text()
+                        raw = await r.read()
+                        html = _safe_decode(raw)
                         soup = BeautifulSoup(html, "html.parser")
                         body = soup.find("div", class_="post-body") or soup
                         click_url = self._extract_download_link(str(body))
@@ -200,7 +209,6 @@ class BlogAutoPoster:
     @staticmethod
     def _extract_download_link(html: str) -> str | None:
         """Find mediafire/pcloud link - prioritize hosts over 'Click Here' text"""
-        # Priority 1: any href with mediafire/pcloud
         for host in ("mediafire.com", "pcloud.link", "u.pcloud.link"):
             m = re.search(
                 rf'href="([^"]*{re.escape(host)}[^"]*)"',
@@ -208,7 +216,6 @@ class BlogAutoPoster:
             )
             if m:
                 return m.group(1).replace("&amp;", "&")
-        # Priority 2: "Click Here" link
         m = re.search(
             r'<a[^>]+href="([^"]+)"[^>]*>\s*(?:<[^>]+>)*\s*Click\s*Here',
             html, re.IGNORECASE,
@@ -244,9 +251,15 @@ class BlogAutoPoster:
             )
             try:
                 async with session.get(
-                    api, headers={"User-Agent": USER_AGENT}, timeout=30
+                    api,
+                    headers={
+                        "User-Agent": USER_AGENT,
+                        "Accept-Encoding": "identity",
+                    },
+                    timeout=30,
                 ) as r:
-                    data = await r.json(content_type=None)
+                    raw = await r.read()
+                data = json.loads(_safe_decode(raw)) if raw else {}
             except Exception as e:
                 log.warning("  folder API failed: %s", e)
                 break
@@ -275,7 +288,9 @@ class BlogAutoPoster:
             try:
                 cover_path = os.path.join(tmpdir, "cover.jpg")
                 async with session.get(
-                    cover_url, headers={"User-Agent": USER_AGENT}, timeout=30
+                    cover_url,
+                    headers={"User-Agent": USER_AGENT},
+                    timeout=30,
                 ) as cr:
                     if cr.status == 200:
                         with open(cover_path, "wb") as f:
@@ -318,9 +333,9 @@ class BlogAutoPoster:
         log.info("  folder done: %d posted", posted)
         return posted > 0
 
-    # ---------- MediaFire direct link (multi-strategy) ----------
+    # ---------- MediaFire direct link (encoding-safe) ----------
     async def _resolve_mediafire_file(self, session, quickkey) -> str | None:
-        # Strategy 1: API get_links (direct_download)
+        # ---- Strategy 1: MediaFire API (safe decode) ----
         try:
             api = (
                 f"https://www.mediafire.com/api/1.5/file/get_links.php"
@@ -328,53 +343,86 @@ class BlogAutoPoster:
                 f"&response_format=json"
             )
             async with session.get(
-                api, headers={"User-Agent": USER_AGENT}, timeout=30
+                api,
+                headers={
+                    "User-Agent": USER_AGENT,
+                    "Accept-Encoding": "identity",
+                },
+                timeout=30,
             ) as r:
-                data = await r.json(content_type=None)
-            for link in data.get("response", {}).get("links", []):
+                raw = await r.read()
+            text = _safe_decode(raw) if raw else ""
+            data = json.loads(text) if text.strip() else {}
+            resp = data.get("response", {})
+            for link in resp.get("links", []):
                 dl = link.get("direct_download")
                 if dl:
+                    log.debug("  [API OK] %s", quickkey)
                     return dl
+            log.debug(
+                "  [API] result=%s msg=%s",
+                resp.get("result"), str(resp.get("message", ""))[:80],
+            )
         except Exception as e:
-            log.debug("  API failed: %s", e)
+            log.debug("  [API] failed: %s", e)
 
-        # Strategy 2: Scrape HTML with extra headers
+        # ---- Strategy 2: HTML scrape (safe decode) ----
         try:
             url = f"https://www.mediafire.com/file/{quickkey}"
             headers = {
                 "User-Agent": USER_AGENT,
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 "Accept-Language": "en-US,en;q=0.9",
+                "Accept-Encoding": "identity",
                 "Referer": "https://www.mediafire.com/",
             }
             async with session.get(url, headers=headers, timeout=30) as r:
                 status = r.status
-                html = await r.text()
+                content_type = r.headers.get("Content-Type", "?")
+                raw = await r.read()
 
-            # downloadButton id
-            m = re.search(
-                r'id="downloadButton"[^>]*href="([^"]+)"', html
-            ) or re.search(
-                r'href="([^"]+)"[^>]*id="downloadButton"', html
+            html = _safe_decode(raw)
+            log.debug(
+                "  [HTML] status=%s ct=%s bytes=%d",
+                status, content_type, len(raw),
             )
+
+            m = re.search(r'id="downloadButton"[^>]*href="([^"]+)"', html)
+            if not m:
+                m = re.search(r'href="([^"]+)"[^>]*id="downloadButton"', html)
             if m:
+                log.debug("  [HTML OK] button found")
                 return m.group(1).replace("&amp;", "&")
 
-            # any download.mediafire.com link
-            m = re.search(
-                r'(https://download\d+\.mediafire\.com/[^"\'\s]+)', html
-            )
+            m = re.search(r'(https://download\d+\.mediafire\.com/[^"\'\s]+)', html)
             if m:
+                log.debug("  [HTML OK] direct link found")
                 return m.group(1).replace("&amp;", "&")
 
+            # diagnose
+            low = html.lower()
             if status != 200:
-                log.warning("  MF HTTP %s (%s)", status, quickkey)
-            elif "captcha" in html.lower() or "robot" in html.lower():
-                log.warning("  MF CAPTCHA (%s)", quickkey)
+                log.warning("  [HTML] HTTP %s (%s)", status, quickkey)
+            elif "captcha" in low or "are you a robot" in low:
+                log.warning("  [HTML] CAPTCHA page (%s)", quickkey)
+            elif (
+                "file removed" in low
+                or "file deleted" in low
+                or "invalid or deleted" in low
+            ):
+                log.warning("  [HTML] file removed/deleted (%s)", quickkey)
+            elif len(raw) < 500:
+                log.warning(
+                    "  [HTML] tiny response (%d bytes, %s): %r",
+                    len(raw), content_type, raw[:120],
+                )
             else:
-                log.warning("  MF page has no download button (%s)", quickkey)
+                log.warning(
+                    "  [HTML] no download button (len=%d, ct=%s, %s)",
+                    len(raw), content_type, quickkey,
+                )
         except Exception as e:
-            log.warning("  MF scrape failed: %s", e)
+            log.warning("  [HTML] scrape failed: %s", e)
 
         return None
 
