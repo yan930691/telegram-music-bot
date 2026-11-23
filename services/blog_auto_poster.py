@@ -28,7 +28,6 @@ DAILY_LIMIT = int(os.getenv("BLOG_DAILY_LIMIT", "10"))
 
 
 def _safe_decode(raw: bytes) -> str:
-    """Try multiple encodings before falling back to ignore."""
     for enc in ("utf-8", "cp1252", "latin-1"):
         try:
             return raw.decode(enc)
@@ -54,6 +53,11 @@ class BlogAutoPoster:
     async def load_seen(self):
         self._seen = await self.state.load_all()
         log.info("Loaded %d seen posts", len(self._seen))
+
+    async def reload_seen(self):
+        """Reload the seen set from DB (after reset_seen)."""
+        self._seen = await self.state.load_all()
+        log.info("Reloaded %d seen posts", len(self._seen))
 
     async def get_status(self) -> dict:
         return {
@@ -117,15 +121,19 @@ class BlogAutoPoster:
 
                 try:
                     ok = await self._handle_entry(session, entry)
-                    self._seen.add(entry["link"])
-                    await self.state.mark(entry["link"])
-                    await self.state.increment_daily()
                     if ok:
+                        # ✅ Success: mark as seen + count toward daily
+                        self._seen.add(entry["link"])
+                        await self.state.mark(entry["link"])
+                        await self.state.increment_daily()
                         processed += 1
+                        log.info("  ✓ entry posted successfully")
                     else:
+                        # ❌ Failed: don't mark, don't count → will retry
                         failed += 1
+                        log.warning("  ✗ entry failed (will retry next batch)")
                 except Exception:
-                    log.exception("entry failed: %s", entry.get("link"))
+                    log.exception("entry exception: %s", entry.get("link"))
                     failed += 1
 
                 await asyncio.sleep(5)
@@ -165,7 +173,6 @@ class BlogAutoPoster:
 
         click_url = self._extract_download_link(summary)
 
-        # Fallback: fetch full post page if no link found in summary
         if not click_url and source_link:
             log.info("  no link in summary, fetching post page...")
             try:
@@ -208,7 +215,6 @@ class BlogAutoPoster:
     # ---------- HTML helpers ----------
     @staticmethod
     def _extract_download_link(html: str) -> str | None:
-        """Find mediafire/pcloud link - prioritize hosts over 'Click Here' text"""
         for host in ("mediafire.com", "pcloud.link", "u.pcloud.link"):
             m = re.search(
                 rf'href="([^"]*{re.escape(host)}[^"]*)"',
@@ -335,7 +341,7 @@ class BlogAutoPoster:
 
     # ---------- MediaFire direct link (encoding-safe) ----------
     async def _resolve_mediafire_file(self, session, quickkey) -> str | None:
-        # ---- Strategy 1: MediaFire API (safe decode) ----
+        # Strategy 1: API
         try:
             api = (
                 f"https://www.mediafire.com/api/1.5/file/get_links.php"
@@ -366,7 +372,7 @@ class BlogAutoPoster:
         except Exception as e:
             log.debug("  [API] failed: %s", e)
 
-        # ---- Strategy 2: HTML scrape (safe decode) ----
+        # Strategy 2: HTML scrape
         try:
             url = f"https://www.mediafire.com/file/{quickkey}"
             headers = {
@@ -399,7 +405,6 @@ class BlogAutoPoster:
                 log.debug("  [HTML OK] direct link found")
                 return m.group(1).replace("&amp;", "&")
 
-            # diagnose
             low = html.lower()
             if status != 200:
                 log.warning("  [HTML] HTTP %s (%s)", status, quickkey)
