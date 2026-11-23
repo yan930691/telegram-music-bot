@@ -70,6 +70,35 @@ async def _keepalive_loop():
         await session.close()
 
 
+async def _blog_auto_loop(poster):
+    """Run blog batches automatically every AUTO_POST_INTERVAL seconds."""
+    try:
+        interval = int(os.getenv("AUTO_POST_INTERVAL", "0") or "0")
+    except ValueError:
+        interval = 0
+    if interval <= 0:
+        logging.info("Blog auto-post disabled (AUTO_POST_INTERVAL not set)")
+        return
+    logging.info("Blog auto-post enabled: every %s seconds", interval)
+    # Let the bot finish polling setup before the first batch.
+    await asyncio.sleep(min(interval, 60))
+    while True:
+        try:
+            if poster.is_running:
+                logging.info("Blog auto-post skipped (batch already running)")
+            else:
+                result = await poster.process_batch(count=10)
+                logging.info("Blog auto-post result: %s", {
+                    k: result.get(k) for k in
+                    ("ok", "processed", "failed", "reason", "used", "limit")
+                })
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logging.exception("Blog auto-post batch failed")
+        await asyncio.sleep(interval)
+
+
 async def _translate_backfill_task():
     """Translate existing songs (English <-> Myanmar) for bilingual search."""
     try:
@@ -101,7 +130,8 @@ async def main():
     validate_config()
     logging.info("Build version: %s", BUILD_VERSION)
     logging.info("Config OK: BOT_TOKEN=%s MONGODB_URI=%s ADMIN_IDS=%s",
-                 "***" if BOT_TOKEN else None, MONGODB_URI, ADMIN_IDS)
+                 "***" if BOT_TOKEN else None,
+                 "***" if MONGODB_URI else None, ADMIN_IDS)
 
     runner = None
     try:
@@ -170,9 +200,10 @@ async def main():
         blog_poster.set_poster(_blog_poster)
         dp.include_router(blog_poster.router)
         logging.info(
-            "Blog poster READY -> channel %s | use /post10 to trigger batch (limit=%s/day)",
+            "Blog poster READY -> channel %s | /post10 manual + auto loop (limit=%s/day)",
             ch_id, os.getenv("BLOG_DAILY_LIMIT", "10"),
         )
+        asyncio.create_task(_blog_auto_loop(_blog_poster))
     else:
         logging.info("Blog poster disabled (AUTO_POST_CHANNEL_ID not set)")
     # ⬆️⬆️⬆️ NEW

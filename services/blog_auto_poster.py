@@ -6,6 +6,7 @@ import random
 import re
 import shutil
 import tempfile
+from html import escape as html_escape
 
 import aiohttp
 import feedparser
@@ -142,10 +143,9 @@ class BlogAutoPoster:
 
     # ---------- batch processing ----------
     async def process_batch(self, count: int = 10) -> dict:
-        if self._running:
-            return {"ok": False, "reason": "already_running"}
-
         async with self._lock:
+            if self._running:
+                return {"ok": False, "reason": "already_running"}
             self._running = True
             try:
                 return await self._process_batch_inner(count)
@@ -457,7 +457,9 @@ class BlogAutoPoster:
         except Exception as e:
             log.debug("  [API] failed: %s", e)
 
-        # Strategy 2: HTML scrape
+        # Strategy 2: the file page redirects straight to the CDN download URL.
+        # Following that redirect makes aiohttp hand us MP3 bytes, not HTML, so
+        # the old downloadButton regex could never match.  Read Location first.
         try:
             url = f"https://www.mediafire.com/file/{quickkey}"
             headers = {
@@ -472,30 +474,38 @@ class BlogAutoPoster:
                 headers=headers,
                 proxy=self._proxy_url,
                 timeout=30,
+                allow_redirects=False,
             ) as r:
                 status = r.status
+                location = (r.headers.get("Location") or "").strip()
                 content_type = r.headers.get("Content-Type", "?")
+                if status in (301, 302, 303, 307, 308) and location:
+                    if location.startswith("//"):
+                        location = "https:" + location
+                    if location.startswith(("http://", "https://")):
+                        log.debug("  [REDIRECT OK] %s", quickkey)
+                        return location.replace("&amp;", "&")
                 raw = await r.read()
 
-            html = _safe_decode(raw)
+            page = _safe_decode(raw)
             log.debug(
                 "  [HTML] status=%s ct=%s bytes=%d",
                 status, content_type, len(raw),
             )
 
-            m = re.search(r'id="downloadButton"[^>]*href="([^"]+)"', html)
+            m = re.search(r'id="downloadButton"[^>]*href="([^"]+)"', page)
             if not m:
-                m = re.search(r'href="([^"]+)"[^>]*id="downloadButton"', html)
+                m = re.search(r'href="([^"]+)"[^>]*id="downloadButton"', page)
             if m:
                 log.debug("  [HTML OK] button found")
                 return m.group(1).replace("&amp;", "&")
 
-            m = re.search(r'(https://download\d+\.mediafire\.com/[^"\'\s]+)', html)
+            m = re.search(r'(https://download\d+\.mediafire\.com/[^"\'\s]+)', page)
             if m:
                 log.debug("  [HTML OK] direct link found")
                 return m.group(1).replace("&amp;", "&")
 
-            low = html.lower()
+            low = page.lower()
             if status != 200:
                 log.warning("  [HTML] HTTP %s (%s)", status, quickkey)
             elif "captcha" in low or "are you a robot" in low:
@@ -549,9 +559,31 @@ class BlogAutoPoster:
                 log.warning("    download failed: %s", e)
                 return False
 
-            caption = f"<b>{album or title}</b>\n🎵 {title}"
+            # Folder flow passes a local temp file; direct-file flow passes a
+            # URL.  FSInputFile needs a real path, so download URL covers first.
+            cover_file = cover_path
+            if cover_path and str(cover_path).startswith(("http://", "https://")):
+                cover_file = None
+                try:
+                    async with session.get(
+                        str(cover_path),
+                        headers={"User-Agent": USER_AGENT},
+                        proxy=self._proxy_url,
+                        timeout=30,
+                    ) as cr:
+                        if cr.status == 200:
+                            cover_file = os.path.join(tmpdir, "cover.jpg")
+                            with open(cover_file, "wb") as f:
+                                f.write(await cr.read())
+                except Exception as e:
+                    log.debug("    cover download failed: %s", e)
+                    cover_file = None
+
+            safe_album = html_escape(album or title, quote=False)
+            safe_title = html_escape(title, quote=False)
+            caption = f"<b>{safe_album}</b>\n🎵 {safe_title}"
             if source_link:
-                caption += f'\n<a href="{source_link}">Source</a>'
+                caption += f'\n<a href="{html_escape(source_link, quote=True)}">Source</a>'
 
             try:
                 await self.bot.send_audio(
@@ -559,7 +591,7 @@ class BlogAutoPoster:
                     audio=FSInputFile(audio_path, filename=f"{title[:50]}.mp3"),
                     title=title[:64],
                     performer=(album or "")[:64] or None,
-                    thumbnail=FSInputFile(cover_path) if cover_path else None,
+                    thumbnail=FSInputFile(cover_file) if cover_file else None,
                     caption=caption[:1024],
                 )
                 return True
