@@ -19,7 +19,8 @@ from handlers.extras import shazam, downloader
 # Import message/song state handlers
 from aiogram.fsm.storage.memory import MemoryStorage
 
-# ⬇️⬇️⬇️ NEW: Blog auto-poster import
+# ⬇️⬇️⬇️ NEW: Blog poster imports
+from handlers import blog_poster
 from services.blog_auto_poster import BlogAutoPoster
 # ⬆️⬆️⬆️ NEW
 
@@ -149,25 +150,29 @@ async def main():
     # Idempotent: only songs missing ``search_terms`` are processed.
     asyncio.create_task(_translate_backfill_task())
 
-    # ⬇️⬇️⬇️ NEW: Blog auto-poster start
+    # ⬇️⬇️⬇️ NEW: Blog poster (manual trigger via /post10)
+    _blog_poster = None
     auto_channel = os.getenv("AUTO_POST_CHANNEL_ID", "").strip()
     if auto_channel:
         try:
             ch_id = int(auto_channel)
         except ValueError:
             ch_id = auto_channel
-        _poster = BlogAutoPoster(
+        _blog_poster = BlogAutoPoster(
             bot=bot,
             channel_id=ch_id,
             rss_url=os.getenv(
                 "BLOG_RSS_URL",
                 "https://phyuniwarpyar.blogspot.com/feeds/posts/default?alt=rss",
             ),
-            interval=int(os.getenv("AUTO_POST_INTERVAL", "1800")),
-            bulk_mode=os.getenv("BLOG_BULK_MODE", "0") == "1",
         )
-        asyncio.create_task(_poster.run())
-        logging.info("Blog poster -> %s (bulk=%s)", ch_id, _poster.bulk_mode)
+        await _blog_poster.load_seen()
+        blog_poster.set_poster(_blog_poster)
+        dp.include_router(blog_poster.router)
+        logging.info(
+            "Blog poster READY -> channel %s | use /post10 to trigger batch (limit=%s/day)",
+            ch_id, os.getenv("BLOG_DAILY_LIMIT", "10"),
+        )
     else:
         logging.info("Blog poster disabled (AUTO_POST_CHANNEL_ID not set)")
     # ⬆️⬆️⬆️ NEW
@@ -183,6 +188,13 @@ async def main():
         logging.exception("Polling crashed")
         raise
     finally:
+        # ⬇️⬇️⬇️ NEW: close blog state connection
+        if _blog_poster is not None:
+            try:
+                await _blog_poster.state.close()
+            except Exception:
+                logging.exception("Failed to close blog state")
+        # ⬆️⬆️⬆️ NEW
         await db.close()
         if runner:
             await runner.cleanup()
