@@ -26,6 +26,11 @@ class BlogState:
     async def seen_count(self) -> int:
         return await self._col.count_documents({})
 
+    async def reset_seen(self) -> int:
+        """Clear all seen posts so they can be reprocessed."""
+        result = await self._col.delete_many({})
+        return result.deleted_count
+
     # ---------- daily limit ----------
     @staticmethod
     def _today() -> str:
@@ -35,14 +40,18 @@ class BlogState:
         doc = await self._daily.find_one({"_id": self._today()})
         return doc.get("count", 0) if doc else 0
 
-    async def increment_daily(self) -> int:
+    async def increment_daily(self, amount: int = 1) -> int:
         doc = await self._daily.find_one_and_update(
             {"_id": self._today()},
-            {"$inc": {"count": 1}},
+            {"$inc": {"count": amount}},
             upsert=True,
             return_document=ReturnDocument.AFTER,
         )
-        return doc.get("count", 0) if doc else 1
+        return doc.get("count", 0) if doc else amount
+
+    async def reset_daily(self) -> None:
+        """Reset today's counter to 0."""
+        await self._daily.delete_one({"_id": self._today()})
 
     async def close(self):
         self._client.close()
