@@ -13,6 +13,7 @@ class BlogState:
         self._col = self._db["blog_seen_posts"]
         self._daily = self._db["blog_daily"]
         self._songs = self._db["blog_posted_songs"]
+        self._covers = self._db["blog_album_covers"]
 
     # ---------- seen posts ----------
     async def load_all(self) -> set[str]:
@@ -38,6 +39,16 @@ class BlogState:
 
     async def mark_song(self, key: str) -> None:
         await self._songs.update_one({"_id": key}, {"$set": {"_id": key}}, upsert=True)
+
+    # ---------- album cover cache ----------
+    async def get_cover(self, link: str) -> int | None:
+        doc = await self._covers.find_one({"_id": link}, {"msg_id": 1})
+        return int(doc["msg_id"]) if doc and doc.get("msg_id") else None
+
+    async def set_cover(self, link: str, msg_id: int) -> None:
+        await self._covers.update_one(
+            {"_id": link}, {"$set": {"msg_id": int(msg_id)}}, upsert=True,
+        )
 
     # ---------- daily limit ----------
     @staticmethod

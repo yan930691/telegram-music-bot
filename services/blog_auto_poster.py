@@ -411,7 +411,8 @@ class BlogAutoPoster:
 
     # ---------- MediaFire folder ----------
     async def _handle_mediafire_folder(
-        self, session, title, folder_url, cover_url, source_link
+        self, session, title, folder_url, cover_url, source_link,
+        cover_msg_id=None,
     ) -> bool:
         m = re.search(r'/folder/([a-zA-Z0-9]+)', folder_url)
         if not m:
@@ -486,9 +487,15 @@ class BlogAutoPoster:
             except Exception:
                 cover_path = None
 
-        # Post the album cover first, then the tracks underneath it.
-        cover_msg_id = None
-        if cover_path and os.path.exists(cover_path):
+        # Post the album cover first, then the tracks underneath it.  Reuse a
+        # cover from an earlier partial run so retries never duplicate it.
+        if cover_msg_id is None and source_link:
+            try:
+                cover_msg_id = await self.state.get_cover(source_link)
+            except Exception as e:
+                log.debug("  cover lookup failed: %s %s", type(e).__name__, e)
+        cover_created_here = False
+        if cover_msg_id is None and cover_path and os.path.exists(cover_path):
             try:
                 # Match the sample post: plain album name, nothing else.
                 caption = html_escape(title, quote=False)
@@ -499,12 +506,20 @@ class BlogAutoPoster:
                     parse_mode="HTML",
                 )
                 cover_msg_id = getattr(cover_msg, "message_id", None)
+                cover_created_here = bool(cover_msg_id)
                 log.info("  cover photo posted")
+                if cover_msg_id and source_link:
+                    try:
+                        await self.state.set_cover(source_link, cover_msg_id)
+                    except Exception as e:
+                        log.debug("  cover save failed: %s %s", type(e).__name__, e)
             except Exception as e:
                 log.warning("  cover photo failed: %s %s", type(e).__name__, e)
 
         posted = 0
         skipped = 0
+        # Transient failures only.  A permanently oversized file is skipped
+        # outright and must not keep the whole album in "pending" forever.
         failed = []
         try:
             for f in files:
@@ -515,40 +530,65 @@ class BlogAutoPoster:
                 if not qk or not name.lower().endswith(AUDIO_EXTS):
                     continue
                 if size > MAX_TG_SIZE:
-                    log.info("    skip (big): %s (%.1f MB)",
-                             name, size / 1024 / 1024)
-                    failed.append((name, "file too big"))
+                    # Telegram cannot *upload* files over 50 MB.  This is a
+                    # permanent skip, not a download failure.
+                    log.info("    skip (over %d MB upload limit): %s (%.1f MB)",
+                             MAX_TG_SIZE // (1024 * 1024), name,
+                             size / 1024 / 1024)
                     continue
 
                 song_title = os.path.splitext(name)[0]
                 key = _song_key(title, song_title)
-                if await self.state.has_song(key):
-                    skipped += 1
-                    log.info("    SKIP already posted: %s", name)
-                    continue
+                try:
+                    if await self.state.has_song(key):
+                        skipped += 1
+                        log.info("    SKIP already posted: %s", name)
+                        continue
 
-                direct = await self._resolve_mediafire_file(session, qk)
-                if not direct:
-                    log.warning("    FAIL: %s (no direct link)", name)
-                    failed.append((name, "no direct link"))
-                    continue
+                    direct = None
+                    for attempt in range(3):
+                        direct = await self._resolve_mediafire_file(session, qk)
+                        if direct:
+                            break
+                        log.warning("    resolve %d/3 failed: %s",
+                                    attempt + 1, name)
+                        await asyncio.sleep(2 * (attempt + 1))
 
-                ok = await self._send_single(
-                    session, song_title, direct,
-                    cover_path, title, source_link,
-                )
-                if ok:
-                    posted += 1
-                    await self.state.mark_song(key)
-                    log.info("    POSTED: %s", name)
-                else:
-                    failed.append((name, "download/send failed"))
+                    if not direct:
+                        log.warning("    FAIL: %s (no direct link)", name)
+                        failed.append((name, "no direct link"))
+                        continue
+
+                    ok = False
+                    for attempt in range(3):
+                        ok = await self._send_single(
+                            session, song_title, direct,
+                            cover_path, title, source_link,
+                        )
+                        if ok:
+                            break
+                        log.warning("    download/send %d/3 failed: %s",
+                                    attempt + 1, name)
+                        await asyncio.sleep(3 * (attempt + 1))
+
+                    if ok:
+                        posted += 1
+                        await self.state.mark_song(key)
+                        log.info("    POSTED: %s", name)
+                    else:
+                        failed.append((name, "download/send failed"))
+                except Exception as e:
+                    # One broken track must never abort the rest of the album.
+                    log.warning("    track error %s: %s %s",
+                                name, type(e).__name__, e)
+                    failed.append((name, "error: " + type(e).__name__))
                 await asyncio.sleep(3)
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
 
-        # No track made it -- remove the cover so a retry won't duplicate it.
-        if posted == 0 and cover_msg_id:
+        # No track made it -- remove a cover created in THIS run so a retry
+        # won't duplicate it.  A reused cover from an earlier run is kept.
+        if posted == 0 and cover_msg_id and cover_created_here:
             try:
                 await self.bot.delete_message(
                     chat_id=self.channel_id, message_id=cover_msg_id,
@@ -588,8 +628,10 @@ class BlogAutoPoster:
 
         log.info("  folder done: %d posted, %d skipped, %d failed",
                  posted, skipped, len(failed))
-        # Skipped tracks count as done so this entry is not retried forever.
-        return posted > 0 or skipped > 0
+        # Only finish the entry when every track is posted or already posted.
+        # Previously one lucky track marked the whole album "seen" and the
+        # remaining failures were never retried.
+        return not failed
 
     # ---------- MediaFire direct link (proxy-aware) ----------
     async def _resolve_mediafire_file(self, session, quickkey) -> str | None:
@@ -719,32 +761,41 @@ class BlogAutoPoster:
         audio_path = os.path.join(tmpdir, "a.mp3")
         try:
             downloaded = False
-            for use_proxy in (True, False):
-                proxy = self._proxy_url if use_proxy else None
-                if not use_proxy and not self._proxy_url:
-                    continue
-                try:
-                    async with session.get(
-                        direct_url,
-                        headers={"User-Agent": USER_AGENT},
-                        proxy=proxy,
-                        timeout=aiohttp.ClientTimeout(total=600),
-                    ) as r:
-                        r.raise_for_status()
-                        total = 0
-                        with open(audio_path, "wb") as f:
-                            async for ch in r.content.iter_chunked(64 * 1024):
-                                total += len(ch)
-                                if total > MAX_TG_SIZE:
-                                    log.info("    download > 50MB, skip")
-                                    return False
-                                f.write(ch)
-                    downloaded = True
+            # MediaFire CDN links intermittently drop mid-download.  Retry a
+            # few times, alternating proxy and direct, before giving up.
+            for round_no in range(3):
+                for use_proxy in (True, False):
+                    proxy = self._proxy_url if use_proxy else None
+                    if not use_proxy and not self._proxy_url:
+                        continue
+                    try:
+                        async with session.get(
+                            direct_url,
+                            headers={"User-Agent": USER_AGENT},
+                            proxy=proxy,
+                            timeout=aiohttp.ClientTimeout(total=600),
+                        ) as r:
+                            r.raise_for_status()
+                            total = 0
+                            with open(audio_path, "wb") as f:
+                                async for ch in r.content.iter_chunked(64 * 1024):
+                                    total += len(ch)
+                                    if total > MAX_TG_SIZE:
+                                        log.info("    download > %dMB, skip",
+                                                 MAX_TG_SIZE // (1024 * 1024))
+                                        return False
+                                    f.write(ch)
+                        downloaded = True
+                        break
+                    except Exception as e:
+                        log.warning("    download round %d %s failed: %s %s",
+                                    round_no + 1,
+                                    "proxy" if use_proxy else "direct",
+                                    type(e).__name__, e)
+                if downloaded:
                     break
-                except Exception as e:
-                    log.warning("    download %s failed: %s %s",
-                                "proxy" if use_proxy else "direct",
-                                type(e).__name__, e)
+                if round_no < 2:
+                    await asyncio.sleep(2 * (round_no + 1))
             if not downloaded:
                 return False
 
