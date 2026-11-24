@@ -6,6 +6,7 @@ import random
 import re
 import shutil
 import tempfile
+from datetime import datetime, timedelta, timezone
 from html import escape as html_escape, unescape as html_unescape
 
 import aiohttp
@@ -14,7 +15,7 @@ from aiogram import Bot
 from aiogram.types import FSInputFile
 from bs4 import BeautifulSoup
 
-from services.blog_state import BlogState
+from services.blog_state import BlogState, MYANMAR_TZ
 
 log = logging.getLogger(__name__)
 
@@ -27,6 +28,29 @@ MAX_TG_SIZE = int(os.getenv("MAX_TG_SIZE_MB", "50")) * 1024 * 1024
 BLOGGER_PAGE = 500
 AUDIO_EXTS = (".mp3", ".m4a", ".flac", ".ogg", ".wav")
 DAILY_LIMIT = int(os.getenv("BLOG_DAILY_LIMIT", "10"))
+
+
+def _norm_text(value) -> str:
+    return re.sub(r"\s+", " ", (value or "").strip().lower())
+
+
+def _song_key(album, song) -> str:
+    """Stable key so a song from an album is never posted twice."""
+    return _norm_text(album) + "|" + _norm_text(song)
+
+
+def _song_key_from_caption(caption) -> str | None:
+    lines = (caption or "").splitlines()
+    if not lines:
+        return None
+    song = None
+    for ln in lines:
+        if ln.startswith("\U0001f3b5 "):
+            song = ln[2:].strip()
+            break
+    if not song:
+        return None
+    return _song_key(lines[0], song)
 
 # ⬇️⬇️⬇️ NEW: Proxy configuration
 PROXY_LIST_URL = "https://cdn.jsdelivr.net/gh/proxyscrape/free-proxy-list@main/proxies/all/data.json"
@@ -110,7 +134,7 @@ async def find_working_proxy() -> str | None:
 
 
 class BlogAutoPoster:
-    def __init__(self, bot: Bot, channel_id, rss_url: str):
+    def __init__(self, bot: Bot, channel_id, rss_url: str, admin_ids=None):
         self.bot = bot
         self.channel_id = channel_id
         self.rss_url = rss_url.split("&start-index")[0].split("&max-results")[0]
@@ -119,6 +143,28 @@ class BlogAutoPoster:
         self._lock = asyncio.Lock()
         self._running = False
         self._proxy_url: str | None = None
+        self.admin_ids = [int(x) for x in (admin_ids or [])]
+        if not self.admin_ids:
+            self.admin_ids = [int(x.strip()) for x in
+                              os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
+
+    async def _notify(self, text: str) -> None:
+        """Plain-text DM to every admin (no formatting/link preview markup)."""
+        if not self.admin_ids:
+            return
+        for admin_id in self.admin_ids:
+            try:
+                await self.bot.send_message(chat_id=admin_id, text=text[:3900])
+            except Exception as e:
+                log.warning("  DM to admin failed: %s %s",
+                            admin_id, type(e).__name__)
+
+    def _channel_link(self, message_id) -> str:
+        if not message_id:
+            return ""
+        cid = str(self.channel_id)
+        short = cid[4:] if cid.startswith("-100") else cid
+        return f"https://t.me/c/{short}/{message_id}"
 
     @property
     def is_running(self) -> bool:
@@ -286,11 +332,28 @@ class BlogAutoPoster:
         elif "mediafire.com/file/" in click_url:
             m = re.search(r'/file/([a-zA-Z0-9]+)', click_url)
             if m:
+                key = _song_key(title, title)
+                if await self.state.has_song(key):
+                    log.info("  -> already posted, skip: %s", title)
+                    return True
                 direct = await self._resolve_mediafire_file(session, m.group(1))
                 if direct:
-                    return await self._send_single(
+                    ok = await self._send_single(
                         session, title, direct, cover_url, None, source_link
                     )
+                    date_str = datetime.now(MYANMAR_TZ).strftime("%Y-%m-%d %H:%M")
+                    if ok:
+                        await self.state.mark_song(key)
+                        lines = [f"✅ Song posted {date_str}", f"Song: {title}"]
+                        if source_link:
+                            lines.append(f"Source: {source_link}")
+                        await self._notify("\n".join(lines))
+                    else:
+                        lines = [f"❌ Failed song {date_str}", f"Song: {title}"]
+                        if source_link:
+                            lines.append(f"Source: {source_link}")
+                        await self._notify("\n".join(lines))
+                    return ok
         else:
             log.info("  -> unsupported host: %s", click_url)
         return False
@@ -441,6 +504,8 @@ class BlogAutoPoster:
                 log.warning("  cover photo failed: %s %s", type(e).__name__, e)
 
         posted = 0
+        skipped = 0
+        failed = []
         try:
             for f in files:
                 name = f.get("filename", "")
@@ -452,20 +517,32 @@ class BlogAutoPoster:
                 if size > MAX_TG_SIZE:
                     log.info("    skip (big): %s (%.1f MB)",
                              name, size / 1024 / 1024)
+                    failed.append((name, "file too big"))
+                    continue
+
+                song_title = os.path.splitext(name)[0]
+                key = _song_key(title, song_title)
+                if await self.state.has_song(key):
+                    skipped += 1
+                    log.info("    SKIP already posted: %s", name)
                     continue
 
                 direct = await self._resolve_mediafire_file(session, qk)
                 if not direct:
                     log.warning("    FAIL: %s (no direct link)", name)
+                    failed.append((name, "no direct link"))
                     continue
 
                 ok = await self._send_single(
-                    session, os.path.splitext(name)[0], direct,
+                    session, song_title, direct,
                     cover_path, title, source_link,
                 )
                 if ok:
                     posted += 1
+                    await self.state.mark_song(key)
                     log.info("    POSTED: %s", name)
+                else:
+                    failed.append((name, "download/send failed"))
                 await asyncio.sleep(3)
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
@@ -480,8 +557,39 @@ class BlogAutoPoster:
             except Exception as e:
                 log.debug("  cover cleanup failed: %s", e)
 
-        log.info("  folder done: %d posted", posted)
-        return posted > 0
+        date_str = datetime.now(MYANMAR_TZ).strftime("%Y-%m-%d %H:%M")
+        if posted:
+            lines = [
+                f"✅ Album posted {date_str}",
+                f"Album: {title}",
+                f"New tracks: {posted}",
+            ]
+            if skipped:
+                lines.append(f"Already posted (skipped): {skipped}")
+            link = self._channel_link(cover_msg_id)
+            if link:
+                lines.append(f"Channel: {link}")
+            if source_link:
+                lines.append(f"Source: {source_link}")
+            await self._notify("\n".join(lines))
+
+        if failed:
+            lines = [
+                f"❌ Failed tracks {date_str}",
+                f"Album: {title}",
+            ]
+            for name, reason in failed[:30]:
+                lines.append(f"- {name} ({reason})")
+            if len(failed) > 30:
+                lines.append(f"... and {len(failed) - 30} more")
+            if source_link:
+                lines.append(f"Source: {source_link}")
+            await self._notify("\n".join(lines))
+
+        log.info("  folder done: %d posted, %d skipped, %d failed",
+                 posted, skipped, len(failed))
+        # Skipped tracks count as done so this entry is not retried forever.
+        return posted > 0 or skipped > 0
 
     # ---------- MediaFire direct link (proxy-aware) ----------
     async def _resolve_mediafire_file(self, session, quickkey) -> str | None:

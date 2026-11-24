@@ -195,6 +195,7 @@ async def main():
                 "BLOG_RSS_URL",
                 "https://phyuniwarpyar.blogspot.com/feeds/posts/default?alt=rss",
             ),
+            admin_ids=ADMIN_IDS,
         )
         await _blog_poster.load_seen()
         blog_poster.set_poster(_blog_poster)

@@ -12,6 +12,7 @@ class BlogState:
         self._db = self._client.get_database()
         self._col = self._db["blog_seen_posts"]
         self._daily = self._db["blog_daily"]
+        self._songs = self._db["blog_posted_songs"]
 
     # ---------- seen posts ----------
     async def load_all(self) -> set[str]:
@@ -30,6 +31,13 @@ class BlogState:
         """Clear all seen posts so they can be reprocessed."""
         result = await self._col.delete_many({})
         return result.deleted_count
+
+    # ---------- posted songs (dedupe) ----------
+    async def has_song(self, key: str) -> bool:
+        return await self._songs.count_documents({"_id": key}, limit=1) > 0
+
+    async def mark_song(self, key: str) -> None:
+        await self._songs.update_one({"_id": key}, {"$set": {"_id": key}}, upsert=True)
 
     # ---------- daily limit ----------
     @staticmethod
