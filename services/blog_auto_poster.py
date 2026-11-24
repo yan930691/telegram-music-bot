@@ -403,12 +403,8 @@ class BlogAutoPoster:
         cover_msg_id = None
         if cover_path and os.path.exists(cover_path):
             try:
-                caption = f"<b>{html_escape(title, quote=False)}</b>"
-                if source_link:
-                    caption += (
-                        f'\n<a href="{html_escape(source_link, quote=True)}">'
-                        f"Source</a>"
-                    )
+                # Match the sample post: plain album name, nothing else.
+                caption = html_escape(title, quote=False)
                 cover_msg = await self.bot.send_photo(
                     chat_id=self.channel_id,
                     photo=FSInputFile(cover_path),
