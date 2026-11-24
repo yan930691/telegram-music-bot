@@ -6,7 +6,7 @@ import random
 import re
 import shutil
 import tempfile
-from html import escape as html_escape
+from html import escape as html_escape, unescape as html_unescape
 
 import aiohttp
 import feedparser
@@ -314,13 +314,37 @@ class BlogAutoPoster:
         return None
 
     @staticmethod
+    def _upgrade_blogger_cover(url):
+        # Blogger's media:thumbnail is just a 72x72 square.  The <img> in the
+        # post is sized (e.g. /w400-h370/), so request a sharp 1200px version.
+        if "blogger.googleusercontent.com" not in url:
+            return url
+        url = re.sub(r"/s\d+-w\d+-h\d+-c(?=/|$)", "/w1200", url)
+        url = re.sub(r"/w\d+-h\d+(?=/|$)", "/w1200", url)
+        url = re.sub(r"/w\d+(?=/|$)", "/w1200", url)
+        return url
+
+    @staticmethod
     def _extract_cover(entry, html):
-        for k in ("media_thumbnail", "media_content"):
+        # Prefer the real cover image embedded in the blog post itself.
+        # The feed's auto-generated thumbnail is tiny and looks terrible.
+        for tag in re.finditer(r"<img\b([^>]*)>", html or "", re.I):
+            attrs = tag.group(1)
+            src = re.search(r'\bsrc=["\']([^"\']+)["\']', attrs, re.I)
+            if not src:
+                continue
+            width = re.search(r'data-original-width=["\'](\d+)["\']',
+                              attrs, re.I)
+            if width and int(width.group(1)) < 250:
+                continue  # skip tiny icons / decorative images
+            url = html_unescape(src.group(1)).replace("&amp;", "&")
+            return BlogAutoPoster._upgrade_blogger_cover(url)
+
+        for k in ("media_content", "media_thumbnail"):
             for it in (entry.get(k) or []):
                 if it.get("url"):
-                    return it["url"]
-        m = re.search(r'<img[^>]+src="([^"]+)"', html)
-        return m.group(1) if m else None
+                    return BlogAutoPoster._upgrade_blogger_cover(it["url"])
+        return None
 
     # ---------- MediaFire folder ----------
     async def _handle_mediafire_folder(
