@@ -338,20 +338,29 @@ class BlogAutoPoster:
                 f"?folder_key={fk}&content_type=files&chunk={chunk}"
                 f"&response_format=json&version=1.5"
             )
-            try:
-                async with session.get(
-                    api,
-                    headers={
-                        "User-Agent": USER_AGENT,
-                        "Accept-Encoding": "identity",
-                    },
-                    proxy=self._proxy_url,
-                    timeout=30,
-                ) as r:
-                    raw = await r.read()
-                data = json.loads(_safe_decode(raw)) if raw else {}
-            except Exception as e:
-                log.warning("  folder API failed: %s", e)
+            data = {}
+            for use_proxy in (True, False):
+                proxy = self._proxy_url if use_proxy else None
+                if not use_proxy and not self._proxy_url:
+                    continue
+                try:
+                    async with session.get(
+                        api,
+                        headers={
+                            "User-Agent": USER_AGENT,
+                            "Accept-Encoding": "identity",
+                        },
+                        proxy=proxy,
+                        timeout=aiohttp.ClientTimeout(total=45),
+                    ) as r:
+                        raw = await r.read()
+                    data = json.loads(_safe_decode(raw)) if raw else {}
+                    break
+                except Exception as e:
+                    log.warning("  folder API %s failed: %s %s",
+                                "proxy" if use_proxy else "direct",
+                                type(e).__name__, e)
+            if not data:
                 break
             batch = (
                 data.get("response", {})
@@ -550,24 +559,34 @@ class BlogAutoPoster:
         tmpdir = tempfile.mkdtemp(prefix="one_")
         audio_path = os.path.join(tmpdir, "a.mp3")
         try:
-            try:
-                async with session.get(
-                    direct_url,
-                    headers={"User-Agent": USER_AGENT},
-                    proxy=self._proxy_url,
-                    timeout=aiohttp.ClientTimeout(total=600),
-                ) as r:
-                    r.raise_for_status()
-                    total = 0
-                    with open(audio_path, "wb") as f:
-                        async for ch in r.content.iter_chunked(64 * 1024):
-                            total += len(ch)
-                            if total > MAX_TG_SIZE:
-                                log.info("    download > 50MB, skip")
-                                return False
-                            f.write(ch)
-            except Exception as e:
-                log.warning("    download failed: %s", e)
+            downloaded = False
+            for use_proxy in (True, False):
+                proxy = self._proxy_url if use_proxy else None
+                if not use_proxy and not self._proxy_url:
+                    continue
+                try:
+                    async with session.get(
+                        direct_url,
+                        headers={"User-Agent": USER_AGENT},
+                        proxy=proxy,
+                        timeout=aiohttp.ClientTimeout(total=600),
+                    ) as r:
+                        r.raise_for_status()
+                        total = 0
+                        with open(audio_path, "wb") as f:
+                            async for ch in r.content.iter_chunked(64 * 1024):
+                                total += len(ch)
+                                if total > MAX_TG_SIZE:
+                                    log.info("    download > 50MB, skip")
+                                    return False
+                                f.write(ch)
+                    downloaded = True
+                    break
+                except Exception as e:
+                    log.warning("    download %s failed: %s %s",
+                                "proxy" if use_proxy else "direct",
+                                type(e).__name__, e)
+            if not downloaded:
                 return False
 
             # Folder flow passes a local temp file; direct-file flow passes a
