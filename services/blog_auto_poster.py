@@ -439,7 +439,7 @@ class BlogAutoPoster:
                     "Accept-Encoding": "identity",
                 },
                 proxy=self._proxy_url,
-                timeout=30,
+                timeout=aiohttp.ClientTimeout(total=60),
             ) as r:
                 raw = await r.read()
             text = _safe_decode(raw) if raw else ""
@@ -455,79 +455,90 @@ class BlogAutoPoster:
                 resp.get("result"), str(resp.get("message", ""))[:80],
             )
         except Exception as e:
-            log.debug("  [API] failed: %s", e)
+            log.debug("  [API] failed: %s %s", type(e).__name__, e)
 
         # Strategy 2: the file page redirects straight to the CDN download URL.
         # Following that redirect makes aiohttp hand us MP3 bytes, not HTML, so
         # the old downloadButton regex could never match.  Read Location first.
-        try:
-            url = f"https://www.mediafire.com/file/{quickkey}"
-            headers = {
-                "User-Agent": USER_AGENT,
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.9",
-                "Accept-Encoding": "identity",
-                "Referer": "https://www.mediafire.com/",
-            }
-            async with session.get(
-                url,
-                headers=headers,
-                proxy=self._proxy_url,
-                timeout=30,
-                allow_redirects=False,
-            ) as r:
-                status = r.status
-                location = (r.headers.get("Location") or "").strip()
-                content_type = r.headers.get("Content-Type", "?")
-                if status in (301, 302, 303, 307, 308) and location:
-                    if location.startswith("//"):
-                        location = "https:" + location
-                    if location.startswith(("http://", "https://")):
-                        log.debug("  [REDIRECT OK] %s", quickkey)
-                        return location.replace("&amp;", "&")
-                raw = await r.read()
+        # If the proxy stalls, retry once without it -- a dead proxy used to
+        # burn the whole 30s budget and lose the file.
+        url = f"https://www.mediafire.com/file/{quickkey}"
+        headers = {
+            "User-Agent": USER_AGENT,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "identity",
+            "Referer": "https://www.mediafire.com/",
+        }
+        attempts = [(True, self._proxy_url)]
+        if self._proxy_url:
+            attempts.append((False, None))
+        for use_proxy, proxy in attempts:
+            try:
+                async with session.get(
+                    url,
+                    headers=headers,
+                    proxy=proxy,
+                    timeout=aiohttp.ClientTimeout(total=60),
+                    allow_redirects=False,
+                ) as r:
+                    status = r.status
+                    location = (r.headers.get("Location") or "").strip()
+                    content_type = r.headers.get("Content-Type", "?")
+                    if status in (301, 302, 303, 307, 308) and location:
+                        if location.startswith("//"):
+                            location = "https:" + location
+                        if location.startswith(("http://", "https://")):
+                            log.debug("  [REDIRECT OK] %s via %s", quickkey,
+                                      "proxy" if use_proxy else "direct")
+                            return location.replace("&amp;", "&")
+                    raw = await r.read()
 
-            page = _safe_decode(raw)
-            log.debug(
-                "  [HTML] status=%s ct=%s bytes=%d",
-                status, content_type, len(raw),
-            )
-
-            m = re.search(r'id="downloadButton"[^>]*href="([^"]+)"', page)
-            if not m:
-                m = re.search(r'href="([^"]+)"[^>]*id="downloadButton"', page)
-            if m:
-                log.debug("  [HTML OK] button found")
-                return m.group(1).replace("&amp;", "&")
-
-            m = re.search(r'(https://download\d+\.mediafire\.com/[^"\'\s]+)', page)
-            if m:
-                log.debug("  [HTML OK] direct link found")
-                return m.group(1).replace("&amp;", "&")
-
-            low = page.lower()
-            if status != 200:
-                log.warning("  [HTML] HTTP %s (%s)", status, quickkey)
-            elif "captcha" in low or "are you a robot" in low:
-                log.warning("  [HTML] CAPTCHA page (%s)", quickkey)
-            elif (
-                "file removed" in low
-                or "file deleted" in low
-                or "invalid or deleted" in low
-            ):
-                log.warning("  [HTML] file removed/deleted (%s)", quickkey)
-            elif len(raw) < 500:
-                log.warning(
-                    "  [HTML] tiny response (%d bytes, %s): %r",
-                    len(raw), content_type, raw[:120],
+                page = _safe_decode(raw)
+                log.debug(
+                    "  [HTML] status=%s ct=%s bytes=%d",
+                    status, content_type, len(raw),
                 )
-            else:
-                log.warning(
-                    "  [HTML] no download button (len=%d, ct=%s, %s)",
-                    len(raw), content_type, quickkey,
-                )
-        except Exception as e:
-            log.warning("  [HTML] scrape failed: %s", e)
+
+                m = re.search(r'id="downloadButton"[^>]*href="([^"]+)"', page)
+                if not m:
+                    m = re.search(r'href="([^"]+)"[^>]*id="downloadButton"', page)
+                if m:
+                    log.debug("  [HTML OK] button found")
+                    return m.group(1).replace("&amp;", "&")
+
+                m = re.search(r'(https://download\d+\.mediafire\.com/[^"\'\s]+)', page)
+                if m:
+                    log.debug("  [HTML OK] direct link found")
+                    return m.group(1).replace("&amp;", "&")
+
+                low = page.lower()
+                if status != 200:
+                    log.warning("  [HTML] HTTP %s (%s)", status, quickkey)
+                elif "captcha" in low or "are you a robot" in low:
+                    log.warning("  [HTML] CAPTCHA page (%s)", quickkey)
+                elif (
+                    "file removed" in low
+                    or "file deleted" in low
+                    or "invalid or deleted" in low
+                ):
+                    log.warning("  [HTML] file removed/deleted (%s)", quickkey)
+                elif len(raw) < 500:
+                    log.warning(
+                        "  [HTML] tiny response (%d bytes, %s): %r",
+                        len(raw), content_type, raw[:120],
+                    )
+                else:
+                    log.warning(
+                        "  [HTML] no download button (len=%d, ct=%s, %s)",
+                        len(raw), content_type, quickkey,
+                    )
+                # Got a real page but no link -- no point retrying.
+                return None
+            except Exception as e:
+                log.warning("  [HTML] %s failed: %s %s",
+                            "proxy" if use_proxy else "direct",
+                            type(e).__name__, e)
 
         return None
 
