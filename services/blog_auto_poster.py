@@ -663,8 +663,6 @@ class BlogAutoPoster:
             safe_album = html_escape(album or title, quote=False)
             safe_title = html_escape(title, quote=False)
             caption = f"<b>{safe_album}</b>\n🎵 {safe_title}"
-            if source_link:
-                caption += f'\n<a href="{html_escape(source_link, quote=True)}">Source</a>'
 
             try:
                 await self.bot.send_audio(
