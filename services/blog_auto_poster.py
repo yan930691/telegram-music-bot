@@ -399,6 +399,27 @@ class BlogAutoPoster:
             except Exception:
                 cover_path = None
 
+        # Post the album cover first, then the tracks underneath it.
+        cover_msg_id = None
+        if cover_path and os.path.exists(cover_path):
+            try:
+                caption = f"<b>{html_escape(title, quote=False)}</b>"
+                if source_link:
+                    caption += (
+                        f'\n<a href="{html_escape(source_link, quote=True)}">'
+                        f"Source</a>"
+                    )
+                cover_msg = await self.bot.send_photo(
+                    chat_id=self.channel_id,
+                    photo=FSInputFile(cover_path),
+                    caption=caption[:1024],
+                    parse_mode="HTML",
+                )
+                cover_msg_id = getattr(cover_msg, "message_id", None)
+                log.info("  cover photo posted")
+            except Exception as e:
+                log.warning("  cover photo failed: %s %s", type(e).__name__, e)
+
         posted = 0
         try:
             for f in files:
@@ -428,6 +449,16 @@ class BlogAutoPoster:
                 await asyncio.sleep(3)
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
+
+        # No track made it -- remove the cover so a retry won't duplicate it.
+        if posted == 0 and cover_msg_id:
+            try:
+                await self.bot.delete_message(
+                    chat_id=self.channel_id, message_id=cover_msg_id,
+                )
+                log.info("  cover photo removed (no tracks posted)")
+            except Exception as e:
+                log.debug("  cover cleanup failed: %s", e)
 
         log.info("  folder done: %d posted", posted)
         return posted > 0
