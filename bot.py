@@ -12,7 +12,7 @@ import aiohttp
 from config import BOT_TOKEN, ADMIN_IDS, MONGODB_URI, BUILD_VERSION
 from database import db
 
-from handlers import start, post, deeplink, admin, scheduler
+from handlers import start, post, deeplink, admin, scheduler, watch
 from handlers.scheduler import schedule_worker
 
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -94,6 +94,7 @@ async def main():
     dp.include_router(post.router)
     dp.include_router(deeplink.router)
     dp.include_router(admin.router)
+    dp.include_router(watch.router)
 
     try:
         await db.connect()
@@ -104,6 +105,7 @@ async def main():
 
     asyncio.create_task(_keepalive_loop())
     asyncio.create_task(schedule_worker(bot))
+    asyncio.create_task(watch.watch_worker(bot))
 
     logging.info("Bot starting. Admins: %s", ADMIN_IDS)
 

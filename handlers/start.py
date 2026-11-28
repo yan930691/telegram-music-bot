@@ -30,6 +30,7 @@ async def help_handler(message: Message):
     await message.answer(
         "📖 <b>အသုံးပြုပုံ</b>\n\n"
         "Admin များ: /menu ဖြင့် Admin Menu ထဲ ဝင်နိုင်ပါသည်။\n"
+        "Admin များ: /watch ဖြင့် ဇာတ်ကားစောင့်ကြည့်စစ်ဆေးမှု လုပ်နိုင်ပါသည်။\n"
         "User များ: Channel ထဲမှ post များမှ ဇာတ်ကားရယူနိုင်ပါသည်။",
         parse_mode="HTML",
     )
